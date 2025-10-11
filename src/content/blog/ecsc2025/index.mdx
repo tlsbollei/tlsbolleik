@@ -774,6 +774,7 @@ LAB_00113ddf:
 
 
 ```
+### First cheat, no-clip
 
 We immediately notice something interesting, directly after variable declaration.
 
@@ -845,6 +846,8 @@ This yields no clip on pipe tiles because elsewhere (and in convert_sketch) the 
 
 So how do we reproduce in play? Simply! Refer to the image above of the massive pipe, type in the keystrokes "LEMMETHRU" and from then on you can just walk / noclip through the pipe. Cool stuff!
 
+### Second exploit, invulnerability
+
 And so we keep walking, killing skeletons until we stumble upon another obstacle.
 
 ![The Game](assets/marian3.png)
@@ -886,6 +889,8 @@ When `Down` is pressed in this state with the persistent flag in check, it perfo
 
 TL;DR? Reach the right edge as far as you can (trigger the first condition), run back to the start, press down. You're teleported back in front of the arena of skeletons with 512 frames/
 ticks of invulnerability and you can pass through all of the skeletons without dying to the next part.
+
+### Third cheat, hover
 
 Now we continue as per routine. And now we stumble upon the last obstacle.
 
@@ -972,6 +977,7 @@ Replicating on the remote (which was VERY troublesome because I’m a monkey and
 All of these respective cheats had to be found among a massive 700 line pile of built-in native functions - such as jump, crouch, stand, horizontal and vertical branches, and modularization with main.
 </Callout>
  
+
 
 
 
