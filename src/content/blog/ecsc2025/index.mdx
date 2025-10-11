@@ -17,6 +17,10 @@ Recently we ([Slovak Cyber Team](https://cyberteam.sk/)), the national team of t
 > Note : First solve locally, and then move to the remote. Connect to the remote with VNC.
 > Hint : Check Marian::update, maybe you'll find something interesting there?
 
+I managed to second solve this challenge, so that was pretty cool.
+
+![The Game](assets/secondsolve.png)
+
 We are given a single artifact which is an ELF binary called "marian".
 ```shell
 $ ./file marian
@@ -29,8 +33,10 @@ Executing the binary starts a game :
 
 Short TL;DR : The game is a tiny SFML platformer prototype, basically a "Mario (apparently for polish people Marian Hydraulik) that goes right" demo, whose real purpose is to turn a color-coded PNG sketch into a playable level. You run, smash, eat, jump. The game opens a 640×480 window titled "Marian Hydraulik" and renders a 320x240 view (scaled 2x), where tile size is 16x16 and view shows 20x15 tiles.
 
-Spoiler alert -> each line is the big-endian byte encoding of an integer that serves as an exponent; the three lines are ASCII chunks of the flag, concacenated. Wow, so that's a shame.
-Loading the .pyc into PyLingual gives us this :
+> [!EXPLANATION]
+> SFML (Simple and Fast Multimedia Library), is a cross-platform software development library designed to provide a simple application programming interface to various multimedia components. SFML is an excellent library that can be used to create 2D games and similar applications in C++. It's an abstraction over OpenGL and various system APIs, presenting a consistent and easy-to-use interface.
+
+Now, the very first thing that I did was simple - play the game. We need an obstacle to pop up to figure out what our next move is. And very much expectedly so, we stumble upon a
 
 ```python title="challenge.obf2.py" collapse={6-64}
 # Decompiled with PyLingual (https://pylingual.io)
@@ -585,6 +591,7 @@ hitcon{Like_I_said_....._sharing_is_cari
 ng_and_caring_is_finding_the_right_share
 _4f63bf95789178799874ddf1c1bd6ad6b6297b}
 ```
+
 
 
 
