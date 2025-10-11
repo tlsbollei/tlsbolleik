@@ -8,6 +8,7 @@ image: './ecsc.png'
 ---
 
 import Callout from '@/components/Callout.astro'
+import { Icon } from 'astro-icon/components'
 
 Recently we ([Slovak Cyber Team](https://cyberteam.sk/)), the national team of the Slovak Republic, competed at the European Cybersecurity Challenge (ECSC), the competition whose preparation took a very long time. However, our hard work paid off, and we managed to end up 4th in the final standings, a historical placement for Slovakia (ECSC 2024, Torino, Italy, 21st place), defeating giants in the process, almost winning the A/D CTF (We were overtaken in the last 3 ticks, unbelievable)!
 
@@ -33,8 +34,9 @@ Executing the binary starts a game :
 
 Short TL;DR : The game is a tiny SFML platformer prototype, basically a "Mario (apparently for polish people Marian Hydraulik) that goes right" demo, whose real purpose is to turn a color-coded PNG sketch into a playable level. You run, smash, eat, jump. The game opens a 640×480 window titled "Marian Hydraulik" and renders a 320x240 view (scaled 2x), where tile size is 16x16 and view shows 20x15 tiles.
 
-> [!NOTE]
-> SFML (Simple and Fast Multimedia Library), is a cross-platform software development library designed to provide a simple application programming interface to various multimedia components. SFML is an excellent library that can be used to create 2D games and similar applications in C++. It's an abstraction over OpenGL and various system APIs, presenting a consistent and easy-to-use interface.
+<Callout title="SFML prerequisites information" variant="important">
+SFML (Simple and Fast Multimedia Library), is a cross-platform software development library designed to provide a simple application programming interface to various multimedia components. SFML is an excellent library that can be used to create 2D games and similar applications in C++. It's an abstraction over OpenGL and various system APIs, presenting a consistent and easy-to-use interface.
+</Callout>
 
 Now, the very first thing that I did was simple - play the game. We need an obstacle to pop up to figure out what our next move is. And very much expectedly so, we stumble upon an obstacle very quickly.
 
@@ -837,8 +839,9 @@ std::vector<>::clear((vector<> *)(this + 0x40));
 The codes we found before are matched sequentially against `(this + 0x40)`, which is the ring of recently pushed keys, this vector is cleared after scanning. 
 On a full match `(idx > 8)` the source erases `4` from Marian's collidable cells vector at `(this + 0x450)` using remove-erase, and it sets the `this[5]=1` flag, which is the flag identifying whether cheats are active.
 
->[!NOTE]
-> This yields no clip on pipe tiles because elsewhere (and in convert_sketch) the solid pipe tiles are type `4`. Collision sampling is done repeatedly by `MapManager::map_collision()` against a list which allows what cell ids can pass through or not. When a call does not provide its own allow-list, it uses Marian's default, which is the vector we just saw at `(this + 0x450)`. After `LEMMETHRU` (explanation above this note), cell `4` becomes absent, so those tiles never get reported as blocking for Marian. However, we still collide with cell ids `0/1/5/6`, because falling through the ground out of the map wouldn't be beneficial for us, and there are blocks in the obstacles later which would invalidify their own respective cheats.
+<Callout title="First cheat" variant="note">
+This yields no clip on pipe tiles because elsewhere (and in convert_sketch) the solid pipe tiles are type `4`. Collision sampling is done repeatedly by `MapManager::map_collision()` against a list which allows what cell ids can pass through or not. When a call does not provide its own allow-list, it uses Marian's default, which is the vector we just saw at `(this + 0x450)`. After `LEMMETHRU` (explanation above this note), cell `4` becomes absent, so those tiles never get reported as blocking for Marian. However, we still collide with cell ids `0/1/5/6`, because falling through the ground out of the map wouldn't be beneficial for us, and there are blocks in the obstacles later which would invalidify their own respective cheats.
+</Callout>
 
 So how do we reproduce in play? Simply! Refer to the image above of the massive pipe, type in the keystrokes "LEMMETHRU" and from then on you can just walk / noclip through the pipe. Cool stuff!
 
@@ -965,9 +968,11 @@ Replicating on the remote (which was VERY troublesome because I’m a monkey and
 ECSC{71348}
 
 
->[!NOTE]
-> All of these respective cheats had to be found among a massive 700 line pile of built-in native functions - such as jump, crouch, stand, horizontal and vertical branches, and modularization with main.
+<Callout title="warning" variant="note">
+All of these respective cheats had to be found among a massive 700 line pile of built-in native functions - such as jump, crouch, stand, horizontal and vertical branches, and modularization with main.
+</Callout>
  
+
 
 
 
