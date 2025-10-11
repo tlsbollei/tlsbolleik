@@ -33,10 +33,15 @@ Executing the binary starts a game :
 
 Short TL;DR : The game is a tiny SFML platformer prototype, basically a "Mario (apparently for polish people Marian Hydraulik) that goes right" demo, whose real purpose is to turn a color-coded PNG sketch into a playable level. You run, smash, eat, jump. The game opens a 640×480 window titled "Marian Hydraulik" and renders a 320x240 view (scaled 2x), where tile size is 16x16 and view shows 20x15 tiles.
 
-> [!EXPLANATION]
+> [!NOTE]
 > SFML (Simple and Fast Multimedia Library), is a cross-platform software development library designed to provide a simple application programming interface to various multimedia components. SFML is an excellent library that can be used to create 2D games and similar applications in C++. It's an abstraction over OpenGL and various system APIs, presenting a consistent and easy-to-use interface.
 
-Now, the very first thing that I did was simple - play the game. We need an obstacle to pop up to figure out what our next move is. And very much expectedly so, we stumble upon a
+Now, the very first thing that I did was simple - play the game. We need an obstacle to pop up to figure out what our next move is. And very much expectedly so, we stumble upon an obstacle very quickly :
+
+![The Game](assets/marian2.png)
+
+A massive pipe is standing in our way. Initial analysis of the game controls gives us no clue on what to do next - we can only jump a small distance on the Y axis and move left or right. This is where we reached a dead end in the game analysis, so I fired up Ghidra.
+
 
 ```python title="challenge.obf2.py" collapse={6-64}
 # Decompiled with PyLingual (https://pylingual.io)
@@ -591,6 +596,7 @@ hitcon{Like_I_said_....._sharing_is_cari
 ng_and_caring_is_finding_the_right_share
 _4f63bf95789178799874ddf1c1bd6ad6b6297b}
 ```
+
 
 
 
