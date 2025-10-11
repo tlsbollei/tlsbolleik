@@ -1,6 +1,6 @@
 ---
 title: "ECSC 2025 Writeups"
-description: "Writeups for the challenges presented at the European Championship"
+description: "Writeups for the challenges presented at the ECSC"
 date: 10-08-2025
 tags: ['writeup', '2025', 'rev', 'crypto', 'misc']
 authors: ['tlsbollei']
@@ -9,26 +9,25 @@ image: './ecsc.png'
 
 import Callout from '@/components/Callout.astro'
 
-Recently we ([Slovak Cyber Team](https://cyberteam.sk/)), ([Czech Cyber Team](https://ctftime.org/team/65727/)) and ([The Few Chosen](https://ctftime.org/team/140885/)) got together for a week long international training bootcamp in preparation for the European Cybersecurity Challenge (ECSC), where we lost our minds over HITCON CTF. An inhumane amount of caffeine, beer ( milk for me :D ) and a dangerously small amount of sleep, we managed to solve a bunch of pretty hard challenges and even first blood one of them. Huge props to TFC, very cool people!
-
-Unfortunately we didn't win. Below are the challenges I solved and my thoughts/writeups on them :3 Let's get into it :3 
+Recently we ([Slovak Cyber Team](https://cyberteam.sk/)), the national team of the Slovak Republic, competed at the European Cybersecurity Challenge (ECSC), the competition whose preparation took a very long time. However, our hard work paid off, and we managed to end up 4th in the final standings, a historical placement for Slovakia (ECSC 2024, Torino, Italy, 21st place), defeating giants in the process, almost winning the A/D CTF (We were overtaken in the last 3 ticks, unbelievable)!
 
 
-## rev/crypto - sharing is caring
-> It's just compiled python... right?
-> 
->
+## rev - Marian Hydraulik (5 solves)
+> Surely, you can't cheat this game, right?
+> Note : First solve locally, and then move to the remote. Connect to the remote with VNC.
+> Hint : Check Marian::update, maybe you'll find something interesting there?
 
-
-We are given a single artifact, a Python 3.12 .pyc file, which upon execution wanted three lines on stdin as input, and either printed out "Success!" or "Fail"
+We are given a single artifact which is an ELF binary called "marian".
 ```shell
-$ ./sharing-is-caring.pyc
-> 44444
-> 5547777854
-> 111111
-Fail
+$ ./file marian
+> marian: ELF 64-bit LSB pie executable, x86-64, version 1 (GNU/Linux), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=da8e85ef76fde554e4b43590ec59a82294f59d73, for GNU/Linux 3.2.0, not stripped
 ```
-Of course, being the very cheesy CTF player I am, the very first thing I thought about -> "If it's asking for three inputs, and then evaluates it with simple success/fail strings, with no indicator of spitting out the flag... is the flag embedded within bytecode, and can we extract it somehow without messing with the crypto inside?"
+
+Executing the binary starts a game :
+
+![The Game](/assets/marian1.png)
+
+Short TL;DR : The game is a tiny SFML platformer prototype, basically a "Mario (apparently for polish people Marian Hydraulik) that goes right" demo, whose real purpose is to turn a color-coded PNG sketch into a playable level. You run, smash, eat, jump. The game opens a 640×480 window titled "Marian Hydraulik" and renders a 320x240 view (scaled 2x), where tile size is 16x16 and view shows 20x15 tiles.
 
 Spoiler alert -> each line is the big-endian byte encoding of an integer that serves as an exponent; the three lines are ASCII chunks of the flag, concacenated. Wow, so that's a shame.
 Loading the .pyc into PyLingual gives us this :
@@ -586,6 +585,7 @@ hitcon{Like_I_said_....._sharing_is_cari
 ng_and_caring_is_finding_the_right_share
 _4f63bf95789178799874ddf1c1bd6ad6b6297b}
 ```
+
 
 
 
