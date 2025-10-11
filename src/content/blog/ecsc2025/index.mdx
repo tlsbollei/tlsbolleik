@@ -36,569 +36,938 @@ Short TL;DR : The game is a tiny SFML platformer prototype, basically a "Mario (
 > [!NOTE]
 > SFML (Simple and Fast Multimedia Library), is a cross-platform software development library designed to provide a simple application programming interface to various multimedia components. SFML is an excellent library that can be used to create 2D games and similar applications in C++. It's an abstraction over OpenGL and various system APIs, presenting a consistent and easy-to-use interface.
 
-Now, the very first thing that I did was simple - play the game. We need an obstacle to pop up to figure out what our next move is. And very much expectedly so, we stumble upon an obstacle very quickly :
+Now, the very first thing that I did was simple - play the game. We need an obstacle to pop up to figure out what our next move is. And very much expectedly so, we stumble upon an obstacle very quickly.
 
 ![The Game](assets/marian2.png)
 
-A massive pipe is standing in our way. Initial analysis of the game controls gives us no clue on what to do next - we can only jump a small distance on the Y axis and move left or right. This is where we reached a dead end in the game analysis, so I fired up Ghidra.
+A massive pipe is standing in our way. Initial analysis of the game controls gives us no clue on what to do next - we can only jump a small distance on the Y axis and move left or right. This is where we reached a dead end in the game analysis, so I fired up Ghidra. 
+Reading the main function shows essentially nothing other than boilerplate setup functions. `Marian::update` is the function in which changes to the Marian object (the character) are made, and consequently the changes to our sprite we need to make in order to cheat the game.
 
+`Marian::update` shows over 700 lines of code. Uploading for curiosity, collapsing for sanity.
 
-```python title="challenge.obf2.py" collapse={6-64}
-# Decompiled with PyLingual (https://pylingual.io)
-# Internal filename: challenge.obf2.py
-# Bytecode version: 3.12.0rc2 (3531)
-# Source timestamp: 2025-08-23 11:07:46 UTC (1755947266)
+```c title="marian::update.c" collapse={6-723}
 
-nums = [
-    4144803293417776131310451317495228706499130241044716671850484110288180082374299088166459295448719,
-    (
-        -2072401646708888065655225658747614353249565120522358335925242055144090041187149544083229647724360
-    ),
-    1402769202505631727601810730581776197716350949074282314174097681867464170562021714349605843278665,
-    (
-        -266910464101355921528772386602523543917783644737516474351090027562514187410064675818699897958587
-    ),
-    (
-        -313229353281522365344068664569836505240104176843824464617477560855244400498647725320806722489359
-    ),
-    557751498740761784158621178035559059268846555052211907264408739687389120087425335352771649978396,
-    (
-        -148220410045571281675213691246814858326140849250454299621527572224931143542450173517412542679173
-    ),
-    564587776942621790900159644909288844361323691524579619089869964015177357514421646000222366841011,
-    16419311167856483659743166580345122059429852687371972090030542491766200835221304811819328984127643,
-    (
-        -129495574458812869075479900411721351204283016397163153311462604211940551198569895507569182199080813
-    ),
-    47898868564720804115714682250274391102579185635034480293836524415742949562361820585750668129254529,
-    (
-        -218390354027018310133763040209628187632374060689193498603396047814125983080443006327100714094044413
-    ),
-    59103242197276592018409321873953124131699316618422104513410197920897935735761382943069825870316159,
-    (
-        -27263762963672679216265023144097755508375724831456195913391130341016602743379285802111387508470863
-    ),
-    1160187342824936887648971210216937643772466507360201042905423657153536580858662152125535660765491989,
-    (
-        -444320422098364618829295716221878629448833826150298094515910374813093990742157048727647821855149363
-    ),
-    3391657179499987245173012089157446876066874678381207432018307585249041358997171094264590277038007977,
-    (
-        -24577331115755648042095942172693201165277671886951704215934044389070300940570840382524224198279961
-    ),
-    1269071325010846032881520707673575200237482393580774435940684724230748033745143799781707960856809939,
-    (
-        -7726874421105907152194917563460067676020997409790741668467611810647472035036892326157134516638801157
-    ),
-    52668298578428194831854365844392870064649623064538094318250290519368281728564224127244694555479507759,
-    (
-        -14912585782593436965791721815706880430658073768879853640660934490173887905327298345044778117728763977
-    ),
-    20665009833075583446533567863500153284398139825571833690969943149563885799810347822665143905426735039,
-    (
-        -4881669849418826679690882149267389579292004979139066657955496750719085286782861933735958022689574551
-    ),
-    19727966805580144784665343549651570513281612075070319397079427974816184475541029955406232208165236847,
-    (
-        -412912430703112866772671727077127791058157331577997254034268890188791073228873359777862031674718585977
-    ),
-    133658941250435616035761147529730684421152093449583968335054480106579383066071224012305258698560296819,
-    (
-        -458807313057700431931426630680383859744706640412367673276163407570064822322611955042530141076353045301
-    ),
-]
+/* Marian::update(unsigned int, MapManager&) */
 
+void __thiscall Marian::update(Marian *this,uint param_1,MapManager *param_2)
 
-def very_fun(arg):
-    if arg in (17, 18):
-        return 18 - arg
-    from fractions import Fraction as F
-
-    l = len(nums)
-    out = F(0, 1)
-    state = F(1, 1)
-    for off in range(l):
-        # This one is *VERY* guessy, IDK if it is right..
-        # out += F(nums[off], return[off]) * state
-        out += F(nums[off], nums[off]) * state
-        state *= F(arg - off, 1)
-    return int(out)
-
-
-init_a = very_fun(0)
-init_b = very_fun(1)
-init_c = very_fun(2)
-init_d = very_fun(3)
-init_e = [very_fun(4), very_fun(5), very_fun(6)]
-init_f = [
-    (very_fun(7), very_fun(8), very_fun(9)),
-    (very_fun(10), very_fun(11), very_fun(12)),
-    (very_fun(13), very_fun(14), very_fun(15)),
-]
-while_var = very_fun(16)
-
-
-def fun0(arg0, arg1):
-    while arg1:
-        state = arg0 & arg1
-        arg0 = arg0 ^ arg1
-        arg1 = state << very_fun(17)
-    return arg0
-
-
-def fun1(arg0, arg1):
-    if arg1 < very_fun(18):
-        return -very_fun(17) * fun1(arg0, -arg1)
-    out = very_fun(18)
-    while arg1:
-        out += arg0 if arg1 & very_fun(17) else very_fun(18)
-        arg0 <<= very_fun(17)
-        arg1 >>= very_fun(17)
-    return out
-
-
-def fun2(start, arg0, arg1):
-    state = start
-    out = very_fun(17)
-    while arg0:
-        if arg0 & very_fun(17):
-            out = fun1(out, state)
-        out %= arg1
-        state = fun1(state, state)
-        state %= arg1
-        arg0 >>= very_fun(17)
-    return out
-
-
-def fun3(arg0, arg1, arg2):
-    out = fun1(fun2(init_c, arg1, init_a), fun2(init_d, arg2, init_a)) % init_a
-    target = very_fun(17)
-    state = very_fun(17)
-    for x in init_e:
-        target = fun1(target, fun2(x, state, init_a)) % init_a
-        state = fun1(state, arg0) % init_b
-    return out == target
-
-
-def fun4(arg0, arg1):
-    a, b = (very_fun(17), very_fun(18))
-    c, d = (arg0 % arg1, arg1)
-    while c > very_fun(17):
-        tmp = d // c
-        x, y = (b - fun1(a, tmp), d - fun1(c, tmp))
-        a, c, b, d = (x, y, a, c)
-    return a % arg1
-
-
-def fun5(arg):
-    if not isinstance(arg, (list, tuple)) or len(arg) < very_fun(19):
-        return False
-    vals = {key: (a, b) for key, a, b in init_f}
-    for key, a, b in arg:
-        vals[key] = (a, b)
-    if len(vals) != very_fun(20):
-        return False
-    for key, (a, b) in vals.items():
-        if not fun3(key, a, b):
-            return False
-    else:  # inserted
-        some_set = {key for key, a, b in arg[: very_fun(19)]}
-        some_list0 = [
-            (key, vals[key][very_fun(18)]) for key in sorted(some_set) if key in vals
-        ]
-        some_list1 = [(key, a) for key, a, b in init_f if key not in some_set]
-        res = []
-        if some_list0:
-            res.append(some_list0[very_fun(18)])
-        res.extend(some_list1[: very_fun(21)])
-        if len(res) < very_fun(19):
-            res = list(((key, a) for key, (a, b) in sorted(vals.items())))[
-                : very_fun(19)
-            ]
-        _ = very_fun(18)
-        for key0, (a0, b0) in enumerate(res):
-            x, y = (very_fun(17), very_fun(17))
-            for key1, (a1, b1) in enumerate(res):
-                if key0 == key1:
-                    continue
-                x = fun1(x, -a1) % init_b
-                y = fun1(y, a0 - a1) % init_b
-            __ = fun1(x, fun4(y, init_b)) % init_b
-
-
-if __name__ == "__main__":
-    inpt0 = int.from_bytes(input("1:").strip().encode())
-    inpt1 = int.from_bytes(input("2:").strip().encode())
-    inpt2 = int.from_bytes(input("3:").strip().encode())
-    if fun5(
-        (
-            [very_fun(22), inpt0, very_fun(23)],
-            [very_fun(24), inpt1, very_fun(25)],
-            [very_fun(26), inpt2, very_fun(27)],
-        )
-    ):
-        print("Success!")
-    else:  # inserted
-        print("Fail")
-
-```
-
-We can see a very large integer list, `nums`, and a function, `very_fun(arg)`, that combines fractions while multiplying by `(arg - off)` each iteration
-What we can also notice is a bunch of helper functions `fun0..fun5` full of bit ops and shifts.
-
-Did you notice?  Most importantly, it is way too opaque. Decompiling this compiled python has by far proved to be the most troublesome and I had to manually reconstruct a bunch of stuff. Namely, the very first decompile you see above is very guessy and used `nums[off]` as its own denominator, therefore the outputs from this version were nonsense. Right next to `nums` there is a second array whose entries look factorial-ish or combinatorial denominators.
-
-The pattern is :
-
-> Start with a rational accumulator , for `off = 0 .. m`, add `n[off] / D[off] * state` , and update `state *= (arg - off)`
-
-This is the shape of "evaluate a baked in polynomial at integer `arg` using Newton form". In other words, `very_fun(n)` was used to synthesize constants from compressed data.
-I manually fixed the wrong guessy part of `very_fun(i)`, so that its occurences were constant-folded, all so we get a straightforward verifier. I won't talk about fixing decompilation artefacts, that's boring. All that matters is, I managed to fold the constants, and got this final version :
-
-
-```python title="reversed.py" 
-C0 = 4144803293417776131310451317495228706499130241044716671850484110288180082374299088166459295448719
-C1 = 2072401646708888065655225658747614353249565120522358335925242055144090041187149544083229647724359
-C2 = 1402769202505631727601810730581776197716350949074282314174097681867464170562021714349605843278664
-C3 = 1335174568503939352563889373190143608146136792487939183543780907770759908268721571509488188235873
-MATRIX_TARGETS = [
-    442427645836698445267007097625472942305363362863130591746066528455945891079759637465163543741507,
-    1132891618999846053017541510085320021631035459029704515373044135313614915469753666299478525789537,
-    3440625422497330758356285966425842805899353260932540945262402832827054563258418833844309632149096,
-]
-MATRIX_ROWS = [
-    (
-        51966,
-        480442839669953990717445646260333383833736214883976558477525831992994289143305421629761482429714,
-        680701978345522085049694956190292511497787092168524280991013677878931201637910598103187515536181,
-    ),
-    (
-        47806,
-        253717457675323180603201716971045682091261518437666533915787790782521696917056900361404824269689,
-        99768326317759269813131181172947299870925613919195157126671930387206518545837120733862757382354,
-    ),
-    (
-        201527,
-        782319055923618868639890136618720319997476308047895888006842867173403800015590219030945524995543,
-        944213788775446264472010893716848921879528565854393198519311752189219209422386607874556309845161,
-    ),
-]
-C4 = 865967982817260602973374066425323583617367103807916127263320767485154348516392723060969424214055
-
-
-def _383e0a577(_3a58bf927, _b0ebfeb1f):
-    while _b0ebfeb1f:
-        _851630ece = _3a58bf927 & _b0ebfeb1f
-        _3a58bf927 = _3a58bf927 ^ _b0ebfeb1f
-        _b0ebfeb1f = _851630ece << 1
-    return _3a58bf927
-
-
-def _b0513850f(_42c60fb75, _e2f78473c, _dfaa473d4):
-    _bb2030824 = (pow(C2, _e2f78473c, C0) * pow(C3, _dfaa473d4, C0)) % C0
-    _a1dc91c90 = 1
-    _6c547ba86 = 1
-    for _219b80dbe in MATRIX_TARGETS:
-        _a1dc91c90 = (_a1dc91c90 * pow(_219b80dbe, _6c547ba86, C0)) % C0
-        _6c547ba86 = (_6c547ba86 * _42c60fb75) % C1
-    return _bb2030824 == _a1dc91c90
-
-
-def check(matrix):
-    if not isinstance(matrix, (list, tuple)) or len(matrix) < 3:
-        return False
-    _3473a7344 = {
-        _98de45b7a: (_b251ef04b, _6f10dfd54)
-        for _98de45b7a, _b251ef04b, _6f10dfd54 in MATRIX_ROWS
+{
+  float fVar1;
+  bool bVar2;
+  char cVar3;
+  undefined8 uVar4;
+  undefined8 uVar5;
+  float *pfVar6;
+  int *piVar7;
+  uint uVar8;
+  double dVar9;
+  float extraout_XMM1_Db;
+  undefined1 auVar10 [16];
+  undefined8 local_6b8;
+  undefined8 local_6b0;
+  undefined8 local_6a8;
+  undefined8 local_6a0;
+  undefined8 local_698;
+  undefined8 local_690;
+  undefined8 local_688;
+  undefined8 local_680;
+  undefined8 local_678;
+  undefined8 local_670;
+  undefined1 local_668 [8];
+  undefined8 local_660;
+  vector<> local_658 [32];
+  vector<> local_638 [32];
+  undefined8 local_618;
+  undefined8 local_610;
+  undefined8 local_608;
+  undefined8 local_600;
+  int local_5f8 [12];
+  undefined8 local_5c8;
+  undefined8 local_5c0;
+  undefined8 local_5b8;
+  undefined8 local_5b0;
+  undefined4 local_5a8;
+  float local_5a4;
+  float local_5a0;
+  float local_59c;
+  float local_598;
+  float local_594;
+  float local_590;
+  float local_58c;
+  vector local_588 [32];
+  vector<> local_568 [32];
+  undefined4 local_548;
+  undefined4 local_544;
+  undefined4 local_540;
+  undefined4 local_53c;
+  undefined4 local_538;
+  allocator<Cell> local_529;
+  vector local_528 [32];
+  vector<> local_508 [32];
+  undefined4 local_4e8;
+  undefined4 local_4e4;
+  undefined4 local_4e0;
+  undefined4 local_4dc;
+  allocator<Cell> local_4c9;
+  vector local_4c8 [32];
+  Rect local_4a8 [36];
+  undefined4 local_484;
+  allocator<Cell> local_47d;
+  undefined4 local_47c;
+  vector local_478 [32];
+  vector local_458 [32];
+  vector<> local_438 [32];
+  undefined4 local_418;
+  undefined4 local_414;
+  undefined4 local_410;
+  undefined4 local_40c;
+  undefined4 local_408;
+  allocator<Cell> local_401;
+  float local_400;
+  float local_3fc;
+  vector local_3f8 [32];
+  vector<> local_3d8 [32];
+  undefined4 local_3b8;
+  undefined4 local_3b4;
+  undefined4 local_3b0;
+  undefined4 local_3ac;
+  undefined4 local_3a8;
+  allocator<Cell> local_399;
+  vector local_398 [32];
+  Rect local_378 [36];
+  undefined4 local_354;
+  allocator<Cell> local_34d;
+  undefined4 local_34c;
+  vector local_348 [32];
+  Rect local_328 [28];
+  undefined4 local_30c;
+  allocator<Cell> local_305;
+  undefined4 local_304;
+  undefined4 local_300;
+  Color local_2fc [4];
+  Mushroom local_2f8 [352];
+  vector local_198 [32];
+  vector<> local_178 [32];
+  undefined4 local_158;
+  undefined4 local_154;
+  undefined4 local_150;
+  undefined4 local_14c;
+  undefined4 local_148;
+  allocator<Cell> local_139;
+  undefined1 local_138 [16];
+  undefined1 local_128 [16];
+  vector local_118 [32];
+  Rect local_f8 [32];
+  undefined4 local_d8;
+  allocator<Cell> local_d1;
+  undefined4 local_d0;
+  float local_cc;
+  int local_c8 [2];
+  undefined8 local_c0;
+  undefined8 local_b8;
+  undefined8 local_b0;
+  undefined8 local_a8;
+  int *local_a0;
+  Mushroom *local_98;
+  Mushroom *local_90;
+  undefined4 *local_88;
+  vector<> *local_80;
+  vector<> *local_78;
+  int *local_70;
+  vector<> *local_68;
+  int *local_60;
+  vector<> *local_58;
+  int *local_50;
+  vector<> *local_48;
+  vector<> *local_40;
+  vector<> *local_38;
+  char local_29;
+  
+  local_5f8[0] = 0xb;
+  local_5f8[1] = 4;
+  local_5f8[2] = 0xc;
+  local_5f8[3] = 0xc;
+  local_5f8[4] = 4;
+  local_5f8[5] = 0x13;
+  local_5f8[6] = 7;
+  local_5f8[7] = 0x11;
+  local_5f8[8] = 0x14;
+  local_38 = (vector<> *)(this + 0x40);
+  local_600 = std::vector<>::begin(local_38);
+  local_608 = std::vector<>::end(local_38);
+  while (bVar2 = __gnu_cxx::operator!=
+                           ((__normal_iterator *)&local_600,(__normal_iterator *)&local_608), bVa r2)
+  {
+    local_a0 = (int *)__gnu_cxx::__normal_iterator<>::operator*((__normal_iterator<> *)&local_60 0);
+    if (local_5f8[(int)(uint)*(ushort *)(this + 6)] == *local_a0) {
+      *(short *)(this + 6) = *(short *)(this + 6) + 1;
+      if (8 < *(ushort *)(this + 6)) {
+        local_5c0 = std::vector<>::end((vector<> *)(this + 0x450));
+        __gnu_cxx::__normal_iterator<>::__normal_iterator<Cell*>
+                  ((__normal_iterator<> *)&local_5c8,(__normal_iterator *)&local_5c0);
+        local_5a8 = 4;
+        uVar4 = std::vector<>::end((vector<> *)(this + 0x450));
+        uVar5 = std::vector<>::begin((vector<> *)(this + 0x450));
+        local_5b0 = std::remove<>(uVar5,uVar4,&local_5a8);
+        __gnu_cxx::__normal_iterator<>::__normal_iterator<Cell*>
+                  ((__normal_iterator<> *)&local_5b8,(__normal_iterator *)&local_5b0);
+        std::vector<>::erase((vector<> *)(this + 0x450),local_5b8,local_5c8);
+        *(undefined2 *)(this + 6) = 0;
+        this[5] = (Marian)0x1;
+      }
     }
-    for _3f8c40d6d, _5f10cb7b3, _bd507825f in matrix:
-        _3473a7344[_3f8c40d6d] = (_5f10cb7b3, _bd507825f)
-    if len(_3473a7344) != 6:
-        return False
-    for _3f8c40d6d, (_44e4612f6, _799ab95a8) in _3473a7344.items():
-        if not _b0513850f(_3f8c40d6d, _44e4612f6, _799ab95a8):
-            return False
-    else:
-        _ef3284fd9 = {_e5d5d3754 for _e5d5d3754, _90245289c, _702c6d6af in matrix[:3]}
-        _e16ff8030 = [
-            (_5a7c5809e, _3473a7344[_5a7c5809e][0])
-            for _5a7c5809e in sorted(_ef3284fd9)
-            if _5a7c5809e in _3473a7344
-        ]
-        _c70933aff = [
-            (_60b18b613, _7c2bc53b1)
-            for _60b18b613, _7c2bc53b1, _5541c3e2b in MATRIX_ROWS
-            if _60b18b613 not in _ef3284fd9
-        ]
-        _b492b7df9 = []
-        if _e16ff8030:
-            _b492b7df9.append(_e16ff8030[0])
-        _b492b7df9.extend(_c70933aff[:2])
-        if len(_b492b7df9) < 3:
-            _b492b7df9 = list(
-                (
-                    (_81c4e4f2b, _827cf462f)
-                    for _81c4e4f2b, (_827cf462f, _949c509b1) in sorted(
-                        _3473a7344.items()
-                    )
-                )
-            )[:3]
-        _c0f19a75f = 0
-        for _55669822f, (_803adccbd, _9c8942e10) in enumerate(_b492b7df9):
-            _a0371b656, _8320b26d3 = (1, 1)
-            for _e37fb606c, (_6f4eda279, _363bbc752) in enumerate(_b492b7df9):
-                if _55669822f == _e37fb606c:
-                    continue
-                _a0371b656 = (_a0371b656 * (-_6f4eda279)) % C1
-                _8320b26d3 = (_8320b26d3 * (_803adccbd - _6f4eda279)) % C1
-            _70d735c49 = (_a0371b656 * pow(_8320b26d3, -1, C1)) % C1
-            _c0f19a75f = (_c0f19a75f + (_9c8942e10 * _70d735c49)) % C1
+    else {
+      *(undefined2 *)(this + 6) = 0;
+    }
+    __gnu_cxx::__normal_iterator<>::operator++((__normal_iterator<> *)&local_600);
+  }
+  std::vector<>::clear((vector<> *)(this + 0x40));
+  if (*(float *)(this + 8) != 0.0) {
+    *(undefined4 *)(this + 0x10) = *(undefined4 *)(this + 8);
+    *(undefined4 *)(this + 8) = 0;
+  }
+  local_40 = (vector<> *)(this + 0x28);
+  local_610 = std::vector<>::begin(local_40);
+  local_618 = std::vector<>::end(local_40);
+  while (bVar2 = __gnu_cxx::operator!=
+                           ((__normal_iterator *)&local_610,(__normal_iterator *)&local_618), bVa r2)
+  {
+    local_98 = (Mushroom *)
+               __gnu_cxx::__normal_iterator<>::operator*((__normal_iterator<> *)&local_610);
+    Mushroom::update(local_98,param_1,param_2);
+    __gnu_cxx::__normal_iterator<>::operator++((__normal_iterator<> *)&local_610);
+  }
+  if (this[2] != (Marian)0x0) {
+    if (*(short *)(this + 0x1e) == 0) {
+      local_cc = *(float *)(this + 0x10) + 0.25;
+      pfVar6 = std::min<float>(&local_cc,(float *)&MAX_VERTICAL_SPEED);
+      *(float *)(this + 0x10) = *pfVar6;
+      *(float *)(this + 0x18) = *(float *)(this + 0x10) + *(float *)(this + 0x18);
+    }
+    else if (*(short *)(this + 0x1e) == 1) {
+      *(undefined4 *)(this + 0x10) = 0xc0800000;
+    }
+    local_c8[0] = *(ushort *)(this + 0x1e) - 1;
+    local_c8[1] = 0;
+    piVar7 = std::max<int>(local_c8 + 1,local_c8);
+    *(short *)(this + 0x1e) = (short)*piVar7;
+    goto LAB_00113ddf;
+  }
+  local_29 = '\0';
+  std::vector<>::vector(local_638);
+  std::vector<>::vector(local_658);
+                    /* try { // try from 00112217 to 00112519 has its CatchHandler @ 0011401d */
+  _local_668 = get_hit_box(this);
+  this[4] = (Marian)0x0;
+  if (1424.0 < *(float *)(this + 0x14)) {
+    *this = (Marian)0x1;
+  }
+  if ((5.0 < *(float *)(this + 0x14)) || (*this == (Marian)0x0)) {
+LAB_0011229e:
+    bVar2 = false;
+  }
+  else {
+    cVar3 = sf::Keyboard::isKeyPressed(0x4a);
+    if (cVar3 != '\x01') goto LAB_0011229e;
+    bVar2 = true;
+  }
+  if (bVar2) {
+    *(undefined4 *)(this + 0x14) = 0x44b50000;
+    *(undefined4 *)(this + 0x18) = 0x42c00000;
+    *(undefined2 *)(this + 0x22) = 0x200;
+    bVar2 = false;
+  }
+  else {
+    if (this[1] == (Marian)0x0) {
+      cVar3 = sf::Keyboard::isKeyPressed(0x48);
+      if (cVar3 == '\0') {
+        cVar3 = sf::Keyboard::isKeyPressed(0x47);
+        if (cVar3 != '\x01') goto LAB_00112326;
+        bVar2 = true;
+      }
+      else {
+LAB_00112326:
+        bVar2 = false;
+      }
+      if (bVar2) {
+        local_29 = '\x01';
+        local_5a4 = -2.0;
+        local_5a0 = *(float *)(this + 0xc) - 0.25;
+        pfVar6 = std::max<float>(&local_5a0,&local_5a4);
+        *(float *)(this + 0xc) = *pfVar6;
+      }
+      cVar3 = sf::Keyboard::isKeyPressed(0x47);
+      if (cVar3 == '\0') {
+        cVar3 = sf::Keyboard::isKeyPressed(0x48);
+        if (cVar3 != '\x01') goto LAB_001123b6;
+        bVar2 = true;
+      }
+      else {
+LAB_001123b6:
+        bVar2 = false;
+      }
+      if (bVar2) {
+        local_29 = '\x01';
+        local_59c = *(float *)(this + 0xc) + 0.25;
+        pfVar6 = std::min<float>(&local_59c,(float *)&MARIAN_WALK_SPEED);
+        *(float *)(this + 0xc) = *pfVar6;
+      }
+    }
+    if (local_29 == '\0') {
+      if (*(float *)(this + 0xc) <= 0.0) {
+        if (*(float *)(this + 0xc) < 0.0) {
+          local_590 = *(float *)(this + 0xc) + 0.25;
+          local_58c = 0.0;
+          pfVar6 = std::min<float>(&local_58c,&local_590);
+          *(float *)(this + 0xc) = *pfVar6;
+        }
+      }
+      else {
+        local_598 = *(float *)(this + 0xc) - 0.25;
+        local_594 = 0.0;
+        pfVar6 = std::max<float>(&local_594,&local_598);
+        *(float *)(this + 0xc) = *pfVar6;
+      }
+    }
+    auVar10 = _local_668;
+    if (this[0x1d] != (Marian)0x0) {
+      cVar3 = sf::Keyboard::isKeyPressed(2);
+      if (cVar3 == '\x01') {
+LAB_00112522:
+        bVar2 = true;
+        auVar10 = _local_668;
+      }
+      else {
+        cVar3 = sf::Keyboard::isKeyPressed(0x4a);
+        if (cVar3 == '\x01') goto LAB_00112522;
+        bVar2 = false;
+        auVar10 = _local_668;
+      }
+      if (bVar2) {
+        if (this[1] == (Marian)0x0) {
+          this[1] = (Marian)0x1;
+          *(float *)(this + 0x18) = *(float *)(this + 0x18) + 16.0;
+        }
+      }
+      else if (this[1] == (Marian)0x1) {
+        local_660._4_4_ = auVar10._12_4_;
+        local_660 = CONCAT44(local_660._4_4_ + 16.0,auVar10._8_4_);
+        local_668._4_4_ = auVar10._4_4_;
+        local_668._0_4_ = auVar10._0_4_;
+        local_668._4_4_ = (float)local_668._4_4_ - 16.0;
+        local_548 = 0;
+        local_544 = 1;
+        local_540 = 4;
+        local_53c = 5;
+        local_538 = 6;
+        std::allocator<Cell>::allocator();
+                    /* try { // try from 00112642 to 00112646 has its CatchHandler @ 00113ea3 */
+        std::vector<>::vector(local_568,&local_548,5,&local_529);
+                    /* try { // try from 00112666 to 0011266a has its CatchHandler @ 00113e8f */
+        MapManager::map_collision(local_588,(Rect *)param_2);
+        std::vector<>::operator=(local_638,local_588);
+        std::vector<>::~vector((vector<> *)local_588);
+        std::vector<>::~vector(local_568);
+        std::allocator<Cell>::~allocator(&local_529);
+        uVar4 = std::vector<>::end(local_638);
+        uVar5 = std::vector<>::begin(local_638);
+                    /* try { // try from 001126d8 to 001126dc has its CatchHandler @ 0011401d */
+        bVar2 = std::all_of<>(uVar5,uVar4);
+        auVar10._8_8_ = local_660;
+        auVar10._0_8_ = local_668;
+        if (bVar2) {
+          this[1] = (Marian)0x0;
+          *(float *)(this + 0x18) = *(float *)(this + 0x18) - 16.0;
+        }
+        else {
+          local_4e8 = 0;
+          local_4e4 = 4;
+          local_4e0 = 5;
+          local_4dc = 6;
+          std::allocator<Cell>::allocator();
+                    /* try { // try from 0011279c to 001127a0 has its CatchHandler @ 00113ece */
+          std::vector<>::vector(local_508,&local_4e8,4,&local_4c9);
+                    /* try { // try from 001127c0 to 001127c4 has its CatchHandler @ 00113eba */
+          MapManager::map_collision(local_528,(Rect *)param_2);
+          std::vector<>::operator=(local_638,local_528);
+          std::vector<>::~vector((vector<> *)local_528);
+          std::vector<>::~vector(local_508);
+          std::allocator<Cell>::~allocator(&local_4c9);
+          uVar4 = std::vector<>::end(local_638);
+          uVar5 = std::vector<>::begin(local_638);
+                    /* try { // try from 00112832 to 00112836 has its CatchHandler @ 0011401d */
+          bVar2 = std::all_of<>(uVar5,uVar4);
+          auVar10._8_8_ = local_660;
+          auVar10._0_8_ = local_668;
+          if (bVar2) {
+            this[1] = (Marian)0x0;
+            *(float *)(this + 0x18) = *(float *)(this + 0x18) - 16.0;
+            local_484 = 1;
+            std::allocator<Cell>::allocator();
+                    /* try { // try from 001128d7 to 001128db has its CatchHandler @ 00113ef9 */
+            std::vector<>::vector(local_4a8,&local_484,1,&local_47d);
+                    /* try { // try from 00112902 to 00112906 has its CatchHandler @ 00113ee5 */
+            MapManager::map_collision(local_4c8,(vector *)param_2,local_4a8);
+            std::vector<>::~vector((vector<> *)local_4c8);
+            std::vector<>::~vector((vector<> *)local_4a8);
+            std::allocator<Cell>::~allocator(&local_47d);
+            local_48 = local_658;
+            local_670 = std::vector<>::begin(local_48);
+            local_678 = std::vector<>::end(local_48);
+            while( true ) {
+              bVar2 = __gnu_cxx::operator!=
+                                ((__normal_iterator *)&local_670,(__normal_iterator *)&local_678) ;
+              auVar10._8_8_ = local_660;
+              auVar10._0_8_ = local_668;
+              if (!bVar2) break;
+              local_50 = (int *)__gnu_cxx::__normal_iterator<>::operator*
+                                          ((__normal_iterator<> *)&local_670);
+              local_47c = 3;
+                    /* try { // try from 001129c7 to 00112c30 has its CatchHandler @ 0011401d */
+              MapManager::set_map_cell
+                        (param_2,(ushort)*local_50,(ushort)local_50[1],(Cell *)&local_47c);
+              MapManager::add_brick_particles
+                        (param_2,(ushort)(*local_50 << 4),(ushort)(local_50[1] << 4));
+              __gnu_cxx::__normal_iterator<>::operator++((__normal_iterator<> *)&local_670);
+            }
+          }
+        }
+      }
+    }
+    _local_668 = auVar10;
+    auVar10 = get_hit_box(this);
+    local_660 = auVar10._8_8_;
+    local_668._0_4_ = auVar10._0_4_;
+    local_668._4_4_ = auVar10._4_4_;
+    local_668._0_4_ = *(float *)(this + 0xc) + (float)local_668._0_4_;
+    MapManager::map_collision(local_478,(Rect *)param_2);
+    std::vector<>::operator=(local_638,local_478);
+    std::vector<>::~vector((vector<> *)local_478);
+    uVar4 = std::vector<>::end(local_638);
+    uVar5 = std::vector<>::begin(local_638);
+    bVar2 = std::all_of<>(uVar5,uVar4);
+    if (bVar2) {
+      *(float *)(this + 0x14) = *(float *)(this + 0xc) + *(float *)(this + 0x14);
+    }
+    else {
+      local_29 = '\0';
+      if (*(float *)(this + 0xc) <= 0.0) {
+        if (*(float *)(this + 0xc) < 0.0) {
+          dVar9 = floor((double)((*(float *)(this + 0x14) + *(float *)(this + 0xc)) / 16.0));
+          *(float *)(this + 0x14) = (float)((dVar9 + 1.0) * 16.0);
+        }
+      }
+      else {
+        dVar9 = ceil((double)((*(float *)(this + 0x14) + *(float *)(this + 0xc)) / 16.0));
+        *(float *)(this + 0x14) = (float)((dVar9 - 1.0) * 16.0);
+      }
+      *(undefined4 *)(this + 0xc) = 0;
+    }
+    auVar10 = get_hit_box(this);
+    local_660 = auVar10._8_8_;
+    local_668._4_4_ = auVar10._4_4_;
+    local_668._0_4_ = auVar10._0_4_;
+    local_668._4_4_ = (float)local_668._4_4_ + 1.0;
+    local_418 = 0;
+    local_414 = 1;
+    local_410 = 4;
+    local_40c = 5;
+    local_408 = 6;
+    std::allocator<Cell>::allocator();
+                    /* try { // try from 00112ced to 00112cf1 has its CatchHandler @ 00113f24 */
+    std::vector<>::vector(local_438,&local_418,5,&local_401);
+                    /* try { // try from 00112d11 to 00112d15 has its CatchHandler @ 00113f10 */
+    MapManager::map_collision(local_458,(Rect *)param_2);
+    std::vector<>::operator=(local_638,local_458);
+    std::vector<>::~vector((vector<> *)local_458);
+    std::vector<>::~vector(local_438);
+    std::allocator<Cell>::~allocator(&local_401);
+                    /* try { // try from 00112d61 to 00112f4a has its CatchHandler @ 0011401d */
+    cVar3 = sf::Keyboard::isKeyPressed(0x49);
+    if ((cVar3 == '\x01') || (cVar3 = sf::Keyboard::isKeyPressed(0x19), cVar3 == '\x01')) {
+      bVar2 = true;
+    }
+    else {
+      bVar2 = false;
+    }
+    if (bVar2) {
+      if ((this[0x1d] == (Marian)0x1) && (cVar3 = sf::Keyboard::isKeyPressed(0xb), cVar3 == '\x0 1'))
+      {
+        bVar2 = true;
+      }
+      else {
+        bVar2 = false;
+      }
+      if (bVar2) {
+        *(undefined4 *)(this + 0x10) = 0xc0800000;
+      }
+      else {
+        if (*(float *)(this + 0x10) == 0.0) {
+          uVar4 = std::vector<>::end(local_638);
+          uVar5 = std::vector<>::begin(local_638);
+          bVar2 = std::all_of<>(uVar5,uVar4);
+          if (bVar2) goto LAB_00112e36;
+          bVar2 = true;
+        }
+        else {
+LAB_00112e36:
+          bVar2 = false;
+        }
+        if (bVar2) {
+          *(undefined4 *)(this + 0x10) = 0xc0800000;
+          this[0x1c] = (Marian)0x8;
+        }
+        else if (this[0x1c] == (Marian)0x0) {
+          local_400 = *(float *)(this + 0x10) + 0.25;
+          pfVar6 = std::min<float>(&local_400,(float *)&MAX_VERTICAL_SPEED);
+          *(float *)(this + 0x10) = *pfVar6;
+        }
+        else {
+          *(undefined4 *)(this + 0x10) = 0xc0800000;
+          this[0x1c] = (Marian)((char)this[0x1c] + -1);
+        }
+      }
+    }
+    else {
+      local_3fc = *(float *)(this + 0x10) + 0.25;
+      pfVar6 = std::min<float>(&local_3fc,(float *)&MAX_VERTICAL_SPEED);
+      *(float *)(this + 0x10) = *pfVar6;
+      this[0x1c] = (Marian)0x0;
+    }
+    auVar10 = get_hit_box(this);
+    local_660 = auVar10._8_8_;
+    local_668._4_4_ = auVar10._4_4_;
+    local_668._0_4_ = auVar10._0_4_;
+    local_668._4_4_ = *(float *)(this + 0x10) + (float)local_668._4_4_;
+    local_3b8 = 0;
+    local_3b4 = 1;
+    local_3b0 = 4;
+    local_3ac = 5;
+    local_3a8 = 6;
+    std::allocator<Cell>::allocator();
+                    /* try { // try from 0011300b to 0011300f has its CatchHandler @ 00113f4f */
+    std::vector<>::vector(local_3d8,&local_3b8,5,&local_399);
+                    /* try { // try from 0011302f to 00113033 has its CatchHandler @ 00113f3b */
+    MapManager::map_collision(local_3f8,(Rect *)param_2);
+    std::vector<>::operator=(local_638,local_3f8);
+    std::vector<>::~vector((vector<> *)local_3f8);
+    std::vector<>::~vector(local_3d8);
+    std::allocator<Cell>::~allocator(&local_399);
+    uVar4 = std::vector<>::end(local_638);
+    uVar5 = std::vector<>::begin(local_638);
+                    /* try { // try from 001130a1 to 001130a5 has its CatchHandler @ 0011401d */
+    bVar2 = std::all_of<>(uVar5,uVar4);
+    if (bVar2) {
+      *(float *)(this + 0x18) = *(float *)(this + 0x10) + *(float *)(this + 0x18);
+    }
+    else {
+      if (0.0 <= *(float *)(this + 0x10)) {
+        if (0.0 < *(float *)(this + 0x10)) {
+          dVar9 = ceil((double)((*(float *)(this + 0x18) + *(float *)(this + 0x10)) / 16.0));
+          *(float *)(this + 0x18) = (float)((dVar9 - 1.0) * 16.0);
+        }
+      }
+      else {
+        if ((this[1] == (Marian)0x0) && (this[0x1d] != (Marian)0x0)) {
+          local_354 = 1;
+          std::allocator<Cell>::allocator();
+                    /* try { // try from 00113158 to 0011315c has its CatchHandler @ 00113f7a */
+          std::vector<>::vector(local_378,&local_354,1,&local_34d);
+                    /* try { // try from 00113186 to 0011318a has its CatchHandler @ 00113f66 */
+          MapManager::map_collision(local_398,(vector *)param_2,local_378);
+          std::vector<>::~vector((vector<> *)local_398);
+          std::vector<>::~vector((vector<> *)local_378);
+          std::allocator<Cell>::~allocator(&local_34d);
+          local_58 = local_658;
+          local_680 = std::vector<>::begin(local_58);
+          local_688 = std::vector<>::end(local_58);
+          while (bVar2 = __gnu_cxx::operator!=
+                                   ((__normal_iterator *)&local_680,(__normal_iterator *)&local_6 88)
+                , bVar2) {
+            local_60 = (int *)__gnu_cxx::__normal_iterator<>::operator*
+                                        ((__normal_iterator<> *)&local_680);
+            local_34c = 3;
+                    /* try { // try from 0011324b to 00113279 has its CatchHandler @ 0011401d */
+            MapManager::set_map_cell
+                      (param_2,(ushort)*local_60,(ushort)local_60[1],(Cell *)&local_34c);
+            MapManager::add_brick_particles
+                      (param_2,(ushort)(*local_60 << 4),(ushort)(local_60[1] << 4));
+            __gnu_cxx::__normal_iterator<>::operator++((__normal_iterator<> *)&local_680);
+          }
+        }
+        local_30c = 5;
+        std::allocator<Cell>::allocator();
+                    /* try { // try from 001132ee to 001132f2 has its CatchHandler @ 00113fa5 */
+        std::vector<>::vector(local_328,&local_30c,1,&local_305);
+                    /* try { // try from 0011331c to 00113320 has its CatchHandler @ 00113f91 */
+        MapManager::map_collision(local_348,(vector *)param_2,local_328);
+        std::vector<>::~vector((vector<> *)local_348);
+        std::vector<>::~vector((vector<> *)local_328);
+        std::allocator<Cell>::~allocator(&local_305);
+        local_68 = local_658;
+        local_690 = std::vector<>::begin(local_68);
+        local_698 = std::vector<>::end(local_68);
+        while (bVar2 = __gnu_cxx::operator!=
+                                 ((__normal_iterator *)&local_690,(__normal_iterator *)&local_698 ),
+              bVar2) {
+          local_70 = (int *)__gnu_cxx::__normal_iterator<>::operator*
+                                      ((__normal_iterator<> *)&local_690);
+          local_304 = 0;
+                    /* try { // try from 001133e1 to 00113498 has its CatchHandler @ 0011401d */
+          MapManager::set_map_cell(param_2,(ushort)*local_70,(ushort)local_70[1],(Cell *)&local_3 04)
+          ;
+          local_300 = MapManager::get_map_sketch_pixel((ushort)param_2,(ushort)*local_70);
+          sf::Color::Color(local_2fc,0xff,'I','U',0xff);
+          cVar3 = sf::operator==(local_2fc,(Color *)&local_300);
+          if (cVar3 == '\0') {
+                    /* try { // try from 001134e1 to 001136ce has its CatchHandler @ 0011401d */
+            MapManager::add_question_block_coin
+                      (param_2,(ushort)(*local_70 << 4),(ushort)(local_70[1] << 4));
+          }
+          else {
+            Mushroom::Mushroom(local_2f8,(float)(*local_70 << 4),(float)(local_70[1] << 4));
+                    /* try { // try from 001134a6 to 001134aa has its CatchHandler @ 00113fb9 */
+            std::vector<>::push_back((vector<> *)(this + 0x28),local_2f8);
+            Mushroom::~Mushroom(local_2f8);
+          }
+          __gnu_cxx::__normal_iterator<>::operator++((__normal_iterator<> *)&local_690);
+        }
+        dVar9 = floor((double)((*(float *)(this + 0x18) + *(float *)(this + 0x10)) / 16.0));
+        *(float *)(this + 0x18) = (float)((dVar9 + 1.0) * 16.0);
+      }
+      this[0x1c] = (Marian)0x0;
+      *(undefined4 *)(this + 0x10) = 0;
+    }
+    if (*(float *)(this + 0xc) == 0.0) {
+      if (local_29 == '\x01') {
+        this[3] = (Marian)(this[3] != (Marian)0x1);
+      }
+    }
+    else if (*(float *)(this + 0xc) <= 0.0) {
+      if (*(float *)(this + 0xc) < 0.0) {
+        this[3] = (Marian)0x1;
+      }
+    }
+    else {
+      this[3] = (Marian)0x0;
+    }
+    auVar10 = get_hit_box(this);
+    local_660 = auVar10._8_8_;
+    local_668._4_4_ = auVar10._4_4_;
+    local_668._0_4_ = auVar10._0_4_;
+    local_668._4_4_ = (float)local_668._4_4_ + 1.0;
+    local_158 = 0;
+    local_154 = 1;
+    local_150 = 4;
+    local_14c = 5;
+    local_148 = 6;
+    std::allocator<Cell>::allocator();
+                    /* try { // try from 0011378b to 0011378f has its CatchHandler @ 00113fe1 */
+    std::vector<>::vector(local_178,&local_158,5,&local_139);
+                    /* try { // try from 001137af to 001137b3 has its CatchHandler @ 00113fcd */
+    MapManager::map_collision(local_198,(Rect *)param_2);
+    std::vector<>::operator=(local_638,local_198);
+    std::vector<>::~vector((vector<> *)local_198);
+    std::vector<>::~vector(local_178);
+    std::allocator<Cell>::~allocator(&local_139);
+    uVar4 = std::vector<>::end(local_638);
+    uVar5 = std::vector<>::begin(local_638);
+                    /* try { // try from 00113821 to 001139c7 has its CatchHandler @ 0011401d */
+    bVar2 = std::all_of<>(uVar5,uVar4);
+    if (!bVar2) {
+      this[4] = (Marian)0x1;
+    }
+    local_78 = (vector<> *)(this + 0x28);
+    local_6a0 = std::vector<>::begin(local_78);
+    local_6a8 = std::vector<>::end(local_78);
+    while( true ) {
+      bVar2 = __gnu_cxx::operator!=((__normal_iterator *)&local_6a0,(__normal_iterator *)&local_ 6a8)
+      ;
+      if (!bVar2) break;
+      local_90 = (Mushroom *)
+                 __gnu_cxx::__normal_iterator<>::operator*((__normal_iterator<> *)&local_6a0);
+      auVar10 = get_hit_box(this);
+      local_138 = auVar10;
+      auVar10 = Mushroom::get_hit_box(local_90);
+      local_128 = auVar10;
+      cVar3 = sf::Rect<float>::intersects((Rect<float> *)local_138,(Rect *)local_128);
+      if (cVar3 == '\x01') {
+        Mushroom::set_dead(local_90,true);
+        if (this[0x1d] == (Marian)0x0) {
+          this[0x1d] = (Marian)0x1;
+          *(undefined2 *)(this + 0x20) = 0x40;
+          *(float *)(this + 0x18) = *(float *)(this + 0x18) - 16.0;
+        }
+      }
+      __gnu_cxx::__normal_iterator<>::operator++((__normal_iterator<> *)&local_6a0);
+    }
+    if (*(short *)(this + 0x22) != 0) {
+      *(short *)(this + 0x22) = *(short *)(this + 0x22) + -1;
+    }
+    _local_668 = get_hit_box(this);
+    local_d8 = 2;
+    std::allocator<Cell>::allocator();
+                    /* try { // try from 00113a40 to 00113a44 has its CatchHandler @ 00114009 */
+    std::vector<>::vector(local_f8,&local_d8,1,&local_d1);
+                    /* try { // try from 00113a6e to 00113a72 has its CatchHandler @ 00113ff5 */
+    MapManager::map_collision(local_118,(vector *)param_2,local_f8);
+    std::vector<>::~vector((vector<> *)local_118);
+    std::vector<>::~vector((vector<> *)local_f8);
+    std::allocator<Cell>::~allocator(&local_d1);
+    local_80 = local_658;
+    local_6b0 = std::vector<>::begin(local_80);
+    local_6b8 = std::vector<>::end(local_80);
+    while( true ) {
+      bVar2 = __gnu_cxx::operator!=((__normal_iterator *)&local_6b0,(__normal_iterator *)&local_ 6b8)
+      ;
+      if (!bVar2) break;
+      local_88 = (undefined4 *)
+                 __gnu_cxx::__normal_iterator<>::operator*((__normal_iterator<> *)&local_6b0);
+      local_d0 = 3;
+                    /* try { // try from 00113b2f to 00113cae has its CatchHandler @ 0011401d */
+      MapManager::set_map_cell(param_2,(ushort)*local_88,(ushort)local_88[1],(Cell *)&local_d0);
+      __gnu_cxx::__normal_iterator<>::operator++((__normal_iterator<> *)&local_6b0);
+    }
+    if (*(short *)(this + 0x20) != 0) {
+      *(short *)(this + 0x20) = *(short *)(this + 0x20) + -1;
+    }
+    fVar1 = *(float *)(this + 0x18);
+    get_hit_box(this);
+    if (240.0 - extraout_XMM1_Db <= fVar1) {
+      die(this,true);
+    }
+    if (this[0x1d] == (Marian)0x0) {
+      uVar8 = (int)*(float *)(this + 0xc) >> 0x1f;
+      Animation::set_animation_speed
+                ((Animation *)(this + 0x2f8),
+                 (ushort)(int)(8.0 / (float)(int)(((int)*(float *)(this + 0xc) ^ uVar8) - uVar8)) );
+      Animation::update((Animation *)(this + 0x2f8));
+    }
+    else {
+      uVar8 = (int)*(float *)(this + 0xc) >> 0x1f;
+      Animation::set_animation_speed
+                ((Animation *)(this + 0x1a0),
+                 (ushort)(int)(8.0 / (float)(int)(((int)*(float *)(this + 0xc) ^ uVar8) - uVar8)) );
+      Animation::update((Animation *)(this + 0x1a0));
+    }
+    bVar2 = true;
+  }
+  std::vector<>::~vector(local_658);
+  std::vector<>::~vector(local_638);
+  if (!bVar2) {
+    return;
+  }
+LAB_00113ddf:
+  local_b8 = std::vector<>::end((vector<> *)(this + 0x28));
+  __gnu_cxx::__normal_iterator<>::__normal_iterator<Mushroom*>
+            ((__normal_iterator<> *)&local_c0,(__normal_iterator *)&local_b8);
+  uVar4 = std::vector<>::end((vector<> *)(this + 0x28));
+  uVar5 = std::vector<>::begin((vector<> *)(this + 0x28));
+  local_a8 = std::remove_if<>(uVar5,uVar4);
+  __gnu_cxx::__normal_iterator<>::__normal_iterator<Mushroom*>
+            ((__normal_iterator<> *)&local_b0,(__normal_iterator *)&local_a8);
+  std::vector<>::erase((vector<> *)(this + 0x28),local_b0,local_c0);
+  return;
+}
 
-        return pow(C2, _c0f19a75f, C0) == C4
-
-
-if __name__ == "__main__":
-    i1 = int.from_bytes(input("1:").strip().encode())
-    i2 = int.from_bytes(input("2:").strip().encode())
-    i3 = int.from_bytes(input("3:").strip().encode())
-    if check(
-        (
-            [
-                4919,
-                i1,
-                132146363252892079238955852043754382244951307426448497798760465957265430114543661757753602857394,
-            ],
-            [
-                57005,
-                i2,
-                775309903033854570882823603825659470664893675806480830434450057789819902048494192286724670375083,
-            ],
-            [
-                48879,
-                i3,
-                118549588096765345719828273586922254620646262475213503758232906237813765902929584873401252181598,
-            ],
-        )
-    ):
-        print("Success!")
-    else:
-        print("Fail")
 
 ```
 
-With constants folded, the helpers become textbook algorithms in disguise ->
+We immediately notice something interesting, directly after variable declaration.
 
-```python
-def fun0(x, y):
-    while y:
-        carry = x & y
-        x ^= y
-        y = carry << 1  
-    return x
+```c
+local_5f8[0] = 0xb;
+local_5f8[1] = 4;
+local_5f8[2] = 0xc;
+local_5f8[3] = 0xc;
+local_5f8[4] = 4;
+local_5f8[5] = 0x13;
+local_5f8[6] = 7;
+local_5f8[7] = 0x11;
+local_5f8[8] = 0x14;
 ```
 
-This, `fun0` is addition implemented via XOR and carry, BINARY_AND, BINARY_XOR, BINARY_LSHIFT -> all signature clues of this within the bytecode, loop until second arg becomes zero. 
+The sequence `{0x0B, 0x04, 0x0C, 0x0C, 0x04, 0x13, 0x07, 0x11, 0x14}` are SFML keycodes (A=0 to Z=25) and they decode to -> `L E M M E T H R U`
 
-Testing `fun0(a,b) == a+b` over random input confirms it.
+This leads me to investigate the rest of this code area.
 
-```python
-def fun1(a, b):
-    if b < 0:
-        return -fun1(a, -b)  
-    out = 0
-    while b:
-        if b & 1:    
-            out += a
-        a <<= 1
-        b >>= 1
-    return out
+```c title="lemmethru.c"
+local_5f8[0] = 0xb;
+local_5f8[1] = 4;
+local_5f8[2] = 0xc;
+local_5f8[3] = 0xc;
+local_5f8[4] = 4;
+local_5f8[5] = 0x13;
+local_5f8[6] = 7;
+local_5f8[7] = 0x11;
+local_5f8[8] = 0x14;
+local_38 = (vector<> *)(this + 0x40);
+local_600 = std::vector<>::begin(local_38);
+local_608 = std::vector<>::end(local_38);
+while (bVar2 = __gnu_cxx::operator!=
+                         ((__normal_iterator *)&local_600,(__normal_iterator *)&local_608), bVar2)
+{
+  local_a0 = (int *)__gnu_cxx::__normal_iterator<>::operator*((__normal_iterator<> *)&local_600);
+  if (local_5f8[(int)(uint)*(ushort *)(this + 6)] == *local_a0) {
+    *(short *)(this + 6) = *(short *)(this + 6) + 1;
+    if (8 < *(ushort *)(this + 6)) {
+      local_5c0 = std::vector<>::end((vector<> *)(this + 0x450));
+      __gnu_cxx::__normal_iterator<>::__normal_iterator<Cell*>
+                ((__normal_iterator<> *)&local_5c8,(__normal_iterator *)&local_5c0);
+      local_5a8 = 4;
+      uVar4 = std::vector<>::end((vector<> *)(this + 0x450));
+      uVar5 = std::vector<>::begin((vector<> *)(this + 0x450));
+      local_5b0 = std::remove<>(uVar5,uVar4,&local_5a8);
+      __gnu_cxx::__normal_iterator<>::__normal_iterator<Cell*>
+                ((__normal_iterator<> *)&local_5b8,(__normal_iterator *)&local_5b0);
+      std::vector<>::erase((vector<> *)(this + 0x450),local_5b8,local_5c8);
+      *(undefined2 *)(this + 6) = 0;
+      this[5] = (Marian)0x1;
+    }
+  }
+  else {
+    *(undefined2 *)(this + 6) = 0;
+  }
+  __gnu_cxx::__normal_iterator<>::operator++((__normal_iterator<> *)&local_600);
+}
+std::vector<>::clear((vector<> *)(this + 0x40));
 
 ```
 
-Above, `fun1`, is multiplication by shift-and-add
+The codes we found before are matched sequentially against `(this + 0x40)`, which is the ring of recently pushed keys, this vector is cleared after scanning. 
+On a full match `(idx > 8)` the source erases `4` from Marian's collidable cells vector at `(this + 0x450)` using remove-erase, and it sets the `this[5]=1` flag, which is the flag identifying whether cheats are active.
 
-```python
-def fun2(base, exp, mod):
-    acc = 1
-    cur = base % mod
-    while exp:
-        if exp & 1:
-            acc = (acc * cur) % mod
-        cur = (cur * cur) % mod
-        exp >>= 1
-    return acc
+>[!NOTE]
+> This yields no clip on pipe tiles because elsewhere (and in convert_sketch) the solid pipe tiles are type `4`. Collision sampling is done repeatedly by `MapManager::map_collision()` against a list which allows what cell ids can pass through or not. When a call does not provide its own allow-list, it uses Marian's default, which is the vector we just saw at `(this + 0x450)`. After `LEMMETHRU` (explanation above this note), cell `4` becomes absent, so those tiles never get reported as blocking for Marian. However, we still collide with cell ids `0/1/5/6`, because falling through the ground out of the map wouldn't be beneficial for us, and there are blocks in the obstacles later which would invalidify their own respective cheats.
+
+So how do we reproduce in play? Simply! Refer to the image above of the massive pipe, type in the keystrokes "LEMMETHRU" and from then on you can just walk / noclip through the pipe. Cool stuff!
+
+And so we keep walking, killing skeletons until we stumble upon another obstacle.
+
+![The Game](assets/marian3.png)
+
+We cannot pass through, as an "arena" of skeletons are standing in our way. There is no way to jump over it (the blocks reach to the minimum (or maximum?) of the y-axis), and they're a different cell id from the one which we bypass, so our no clip doesn't work on them. To Ghidra we go. And soon enough, we find another cheat - 
+
+```c title="invulnerability.c"
+_local_668 = get_hit_box(this);
+this[4] = (Marian)0x0;
+if (1424.0 < *(float *)(this + 0x14)) {
+  *this = (Marian)0x1;
+}
+if ((5.0 < *(float *)(this + 0x14)) || (*this == (Marian)0x0)) {
+LAB_0011229e:
+  bVar2 = false;
+}
+else {
+  cVar3 = sf::Keyboard::isKeyPressed(0x4a);
+  if (cVar3 != '\x01') goto LAB_0011229e;
+  bVar2 = true;
+}
+if (bVar2) {
+  *(undefined4 *)(this + 0x14) = 0x44b50000;
+  *(undefined4 *)(this + 0x18) = 0x42c00000;
+  *(undefined2 *)(this + 0x22) = 0x200;
+  bVar2 = false;
+}
 ```
 
-`fun2`, modular expontentation
+Check line `if (1424.0 < *(float *)(this + 0x14)) {`. 
+`*(float*)(this+0x14)` is the X axis. If you ever exceed 1424.0, it sets a persistent flag as `*this = (Marian)0x1;`. Now, if you return back to the far left, `x <= 5.0` (refer to the line `if ((5.0 < *(float *)(this + 0x14)) || (*this == (Marian)0x0)) {`, directly under), it tests `Down` (`0x4A`)
 
-```python
-def fun4(y, mod):
-    a0, a1 = 1, 0    
-    r0, r1 = y % mod, mod
-    while r0 > 1:
-        q = r1 // r0
-        a0, a1 = (a1 - q * a0), a0
-        r1, r0 = (r0), (r1 - q * r0)
-    return a0 % mod
+When `Down` is pressed in this state with the persistent flag in check, it performs the following :
+```c
+*(float*)(this+0x14) = 1448.0f # X axis
+*(float*)(this+0x18) = 96.0f # Y axis
+*(short*)(this+0x22) = 0x200 # 512 frames of invulnerability
 ```
 
-`fun4`, modular inverse via extended Euclid. The decomp stores variables as (a,b,c,d) and shuffles them each loop, that’s just the same extended GCD state machine.
+TL;DR? Reach the right edge as far as you can (trigger the first condition), run back to the start, press down. You're teleported back in front of the arena of skeletons with 512 frames/
+ticks of invulnerability and you can pass through all of the skeletons without dying to the next part.
 
+Now we continue as per routine. And now we stumble upon the last obstacle.
 
-In the earliest dump, very_fun(17) returned 1 and very_fun(18) returned 0. All the “weird” shifts like `<< very_fun(17)` are just `<< 1`. Tests like `arg1 & very_fun(17)` are just `arg1 & 1` . This is a common obfuscation trick to hide obvious bit operations behind a function call.
+![The Game](assets/marian4.png)
 
-### Thief unmasked
+There's a large hole in the ground that you can't jump over. And so back to Ghidra we go to find the third cheat.
 
-After fucking `FINALLY` unmasking the high-level structure, this is what’s going on :
-
-`C0` is the modulus for group elements, `C1` is the modulus for exponents.
-
-`C2` and `C3` are two fixed bases in the group.
-
-`T[0]` to `T[2]` are “target bases.”
-
-There are three fixed rows with triples `(key, a_fixed, b_fixed)`. main asks you for three user rows with specific keys, you supply `a_user` for each, while `b_user` are not typed—those are constants baked in the binary.
-
-The program validates each of the six rows with a multiplicative identity, then performs a degree-2 interpolation in the exponent ring to compute one final exponent `a0`, and finally checks `pow(C2, a0, C0) == C4`.
-
-Concretely, the per-row predicate is `rhs = T0^1 * T1^k * T2^(k^2) (mod C0)` where `k`, `k^2` are taken modulo `C1`, compute `lhs = C2^a * C3^b (mod C0)` and finally accept the row if `lhs == rhs`.
-
-Here is the direct python equivalent I created and worked with :
-
-```python title="helper.py"
-def row_ok(k, a, b):
-    rhs = 1
-    w = 1
-    for Ti in T:
-        rhs = (rhs * pow(Ti, w, C0)) % C0
-        w = (w * k) % C1
-    lhs = (pow(C2, a, C0) * pow(C3, b, C0)) % C0
-    return lhs == rhs
+```c title="jetpack.c"
+cVar3 = sf::Keyboard::isKeyPressed(0x49);
+if ((cVar3 == '\x01') || (cVar3 = sf::Keyboard::isKeyPressed(0x19), cVar3 == '\x01')) {
+  bVar2 = true;
+}
+else {
+  bVar2 = false;
+}
+if (bVar2) {
+  if ((this[0x1d] == (Marian)0x1) && (cVar3 = sf::Keyboard::isKeyPressed(0xb), cVar3 == '\x01')) {
+    bVar2 = true;
+  }
+  else {
+    bVar2 = false;
+  }
+  if (bVar2) {
+    *(undefined4 *)(this + 0x10) = 0xc0800000;
+  }
+  else {
+    if (*(float *)(this + 0x10) == 0.0) {
+      uVar4 = std::vector<>::end(local_638);
+      uVar5 = std::vector<>::begin(local_638);
+      bVar2 = std::all_of<>(uVar5,uVar4);
+      if (bVar2) goto LAB_00112e36;
+      bVar2 = true;
+    }
+    else {
+LAB_00112e36:
+      bVar2 = false;
+    }
+    if (bVar2) {
+      *(undefined4 *)(this + 0x10) = 0xc0800000;
+      this[0x1c] = (Marian)0x8;
+    }
+    else if (this[0x1c] == (Marian)0x0) {
+      local_400 = *(float *)(this + 0x10) + 0.25;
+      pfVar6 = std::min<float>(&local_400,(float *)&MAX_VERTICAL_SPEED);
+      *(float *)(this + 0x10) = *pfVar6;
+    }
+    else {
+      *(undefined4 *)(this + 0x10) = 0xc0800000;
+      this[0x1c] = (Marian)((char)this[0x1c] + -1);
+    }
+  }
+}
+else {
+  local_3fc = *(float *)(this + 0x10) + 0.25;
+  pfVar6 = std::min<float>(&local_3fc,(float *)&MAX_VERTICAL_SPEED);
+  *(float *)(this + 0x10) = *pfVar6;
+  this[0x1c] = (Marian)0x0;
+}
 ```
 
-### Why does this matter in RE?
-The right-hand side uses exponents `1, k, k^2` reduced modulo `C1`. That means the required exponents `a(k)` and `b(k)` on the left must each be a polynomial of degree at most 2 in k, in the ring of integers modulo `C1`.
-The three fixed rows give three equations, which are enough to solve for the three coefficients of each polynomial. This is pure modular linear algebra, not discrete logs. yippeeee :3
+Jump detection is `Up` (`0x49`) or `Z` (`0x19`).
 
-### Main orchestreator dissected
+If jumping and `this[0x1d] == 1` (Big, mario) and key `L` (`0x0B`) is `down` forces vy = `-4.0f` (`0xC0800000`) every update tick while the keys are held. That overrides gravity and any existing vy.
 
-The big function, `fun5` :
+Else, it runs normal jump/airborne logic with gravity (`vy += 0.25` nerfed by `MAX_VERTICAL_SPEED`). There’s also a branch granting a short upward kick (`this[0x1c] = 8`) under a specific predicate (the decompiler shows `std::all_of` on a collision buffer), but this cheat path bypasses all of that.
 
-Builds a mapping `vals[key] = (a, b)` from:
-        the three fixed rows,
-        and your three user rows (overwriting any duplicates if keys overlap).
+Why does it work? Well, gravity is applied per frame in this section. The cheat path reassigns `vy` to `−4.0f` every frame after any gravity add that would otherwise occur, as long as the key condition holds true. Result? Continuous ascent/hover. At the end we find this stonk :
 
-Checks the mapping has exactly six distinct keys. If not, `kill`!
+![The Game](assets/marian5.png)
 
-Validates each row with the per-row multiplicative predicate described above. If any row fails, `kill`!
+and walking through it teleports us to this area :
 
-Only if all rows pass, it prepares three `(x, y)` pairs where `x` is a key and `y` is the corresponding `a(key)`. The selection logic is very very quirky, but boils down to “take one of your rows, then two of the fixed rows.”
+![The Game](assets/marian6.png)
 
-Computes Lagrange interpolation at x = 0 in the exponent ring modulo `C1`. That yields `a(0)`.
+Above (after moving right) reads : GJ. NOW GO TEST ON THE REMOTE SERVICE. 
+Replicating on the remote (which was VERY troublesome because I’m a monkey and VNC installation is up there with sagemath installation) directly gave us the flag at the end instead of the "GJ" text. 
 
-Final check: `pow(C2, a(0), C0) == C4`
+## Flag
 
-Readable re-implementaiton of the trash human language above :
-
-```python
-def lag_weight_at_zero(i, xs, mod):
-    # λ_i(0) = Π_{j ≠ i} (-x_j) / (x_i - x_j) mod 'mod'
-    num = 1
-    den = 1
-    xi = xs[i]
-    for j, xj in enumerate(xs):
-        if j == i: 
-            continue
-        num = (num * (-xj % mod)) % mod
-        den = (den * ((xi - xj) % mod)) % mod
-    return (num * pow(den, -1, mod)) % mod
-
-def a_at_zero(pairs, mod):
-    xs = [x for x,_ in pairs]
-    ys = [y for _,y in pairs]
-    total = 0
-    for i in range(3):
-        total = (total + ys[i] * lag_weight_at_zero(i, xs, mod)) % mod
-    return total
-```
-
-and we hook it to the final check :
-
-```python
-def final_check(pairs):
-    a0 = a_at_zero(pairs, C1)
-    return pow(C2, a0, C0) == C4
-```
-
-This took me a while, but once you realize exponents are polynomials of degree at most two (because the right-hand side uses exponents `1, k, k^2 modulo C1`), the math is plain modular linear algebra, and as follows :
-
-Build the 3×3 matrix E with rows `[1, k, k^2]` using the three fixed keys, all entries taken modulo `C1`.
-
-Solve `E * u = [a_fixed_1, a_fixed_2, a_fixed_3] (mod C1)` to get coefficients `u = (u0, u1, u2)` of `a(k) = u0 + u1*k + u2*k^2 (mod C1)`.
-
-Solve `E * v = [b_fixed_1, b_fixed_2, b_fixed_3] (mod C1)` to get `b(k)`.
-
-Evaluate `a(k)` at the three user keys from main. Those are the three integers you must submit, and our cute flag!
-
-All six rows now pass. The program takes one of your rows plus two fixed rows, computes `a(0)` by Lagrange interpolation in the exponent ring modulo `C1`, and verifies `pow(C2, a(0), C0) == C4`.
-
-Below is a minimal solver for coefficient recovery :
-
-```python title="coefficient_recovery.py"
-def mat_inv_mod_3(E, mod):
-    a,b,c = E[0]; d,e,f = E[1]; g,h,i = E[2]
-    det = (a*(e*i - f*h) - b*(d*i - f*g) + c*(d*h - e*g)) % mod
-    det_inv = pow(det, -1, mod)
-    adj = [
-      [(e*i - f*h) % mod, (c*h - b*i) % mod, (b*f - c*e) % mod],
-      [(f*g - d*i) % mod, (a*i - c*g) % mod, (c*d - a*f) % mod],
-      [(d*h - e*g) % mod, (b*g - a*h) % mod, (a*e - b*d) % mod],
-    ]
-    return [[(det_inv*adj[r][c])%mod for c in range(3)] for r in range(3)]
-
-def solve_uv():
-    ks = [FIXED[i][0] for i in range(3)]
-    E = [
-      [1, ks[0] % C1, pow(ks[0], 2, C1)],
-      [1, ks[1] % C1, pow(ks[1], 2, C1)],
-      [1, ks[2] % C1, pow(ks[2], 2, C1)],
-    ]
-    invE = mat_inv_mod_3(E, C1)
-    aStar = [FIXED[i][1] % C1 for i in range(3)]
-    bStar = [FIXED[i][2] % C1 for i in range(3)]
-    dot = lambda M, v: [sum(M[r][c]*v[c] for c in range(3)) % C1 for r in range(3)]
-    u = dot(invE, aStar)
-    v = dot(invE, bStar)
-    return u, v
-
-def a_of(k,u): return (u[0] + u[1]*(k % C1) + u[2]*pow(k, 2, C1)) % C1
-def b_of(k,v): return (v[0] + v[1]*(k % C1) + v[2]*pow(k, 2, C1)) % C1
-```
-
-and putting it all together...
-
-```python title="solucio.py"
-def solve_inputs():
-    u, v = solve_uv()
-    lines = []
-    for k in [4919, 57005, 48879]:
-        a = a_of(k, u)
-        lines.append(int.to_bytes(a, (a.bit_length()+7)//8, 'big').decode())
-    return lines
-
-for s in solve_inputs():
-    print(s)
-```
-
-```shell 
-$ python3 solucio.py
-hitcon{Like_I_said_....._sharing_is_cari
-ng_and_caring_is_finding_the_right_share
-_4f63bf95789178799874ddf1c1bd6ad6b6297b}
-```
+ECSC{71348}
 
 
-
+>[!NOTE]
+> All of these respective cheats had to be found among a massive 700 line pile of built-in native functions - such as jump, crouch, stand, horizontal and vertical branches, and modularization with main.
+ 
 
 
 
