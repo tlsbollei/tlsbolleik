@@ -1304,3 +1304,83 @@ solver.add( (b[arg3] == (hour // 10)) )
 (or the logical equivalent in one Or/And formula). Check2 (`_5`) would use the `!= != ==` chain. After each check, it updates `T += 86400` symbolically for the next use of `date`.
 
 Once all constraints from all instructions are applied, we call `solver.check()` and obtain a model. We then read out `flag_chars[i]` from the model, convert to `chr` and print the string, which is our flag.
+
+```python title=solve.py
+from z3 import *
+from mapping import mapping
+from tz_map import tz_mapping
+
+target = (0, 1, 0, 1, 1, 1, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 1, 1, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 1, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 0, 1, 0, 1, 1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 1, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 1, 0, 1, 0, 0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 1, 1, 0, 1, 1, 0, 1, 1, 1, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1)
+idx = 0
+
+f = open("eztz.sh", "r")
+src = f.read()
+f.close()
+
+vars = [Bool(f"b{i}") for i in range(210)]
+slv = Solver()
+
+tm = 43210
+pos = 0
+
+while True:
+    row = pos // 45
+    col = pos % 45
+    off1 = row * 366
+    op = f"_{src[332 + off1 + col:][:1]}"
+    off2 = col * 6
+    params = src[61 + off1 + off2:][:6]
+    vals = [int(params[i:i+2], 16) for i in range(0, 6, 2)]
+    print(f"{pos:04X}: {op}{tuple(vals)}")
+    
+    if op == "_0":
+        print(f"Exited???")
+        exit(1)
+    elif op in ("_1", "_2"):
+        pos = vals[0]*256+vals[1]
+    elif op == "_3":
+        print(f"write '{vals[0]:c}'")
+        break
+    elif op == "_4":
+        dat = tz_mapping[tm]
+        tm += 86400
+        a, b, c = vals
+        cond1 = If(vars[b] == vars[c], 1, 0)
+        cond2 = If(cond1 == dat[0], 1, 0)
+        if target[idx]:
+            slv.add(cond2 != vars[a])
+        else:
+            slv.add(Not(cond2 != vars[a]))
+        pos = mapping[pos][target[idx]]
+        idx += 1
+    elif op == "_5":
+        dat = tz_mapping[tm]
+        tm += 86400
+        a, b, c = vals
+        cond1 = If(vars[b] != vars[c], 1, 0)
+        cond2 = If(cond1 == dat[0], 1, 0)
+        if target[idx]:
+            slv.add(cond2 != vars[a])
+        else:
+            slv.add(Not(cond2 != vars[a]))
+        pos = mapping[pos][target[idx]]
+        idx += 1
+    else:
+        print(f"We got {op} @ {pos:#x}")
+        exit()
+
+print(f"Checking...")
+if slv.check() != sat:
+    exit(f"Failed :(")
+
+mdl = slv.model()
+
+res = "".join([str(int(eval(str(mdl[v])))) for v in vars])
+chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXY0123456789_{}"
+
+out = ""
+for i in range(0, len(res), 6):
+    bits = int(res[i:i+6][::-1], 2)
+    out += chars[bits]
+print(out)
+```
