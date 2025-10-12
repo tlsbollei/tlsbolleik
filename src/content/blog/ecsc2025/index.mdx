@@ -982,20 +982,325 @@ All of these respective cheats had to be found among a massive 700 line pile of 
 
 ## rev - eztz (9 solves)
 
-We are given a 
+We are given a .zip file called `eztz.zip`.
 
+```shell
+$ tree eztz
+> eztz/
+├── cleaned_up.sh
+├── Dockerfile
+├── eztz.sh
+└── README.md
 
+1 directory, 4 files
+```
 
+The eztz.sh script implements a custom stackless VM whose program is encoded as obfuscated hex. The first part of the script checks the flag format and then contains large hex blocks ending with = signs. In fact the script does `s=\cat $0`to read its own contents into a string. 
 
+```bash title="eztz.sh" 
+#!/bin/bash
+                          [[ $# == 1 ]]||exit 1;_000CFE6F692E6BA8730A80AE5DF0A500B901171AC804845A012CB8374170002748031633275EBA0313E7020155919AB7014A95030D8E2E7577046FA701F5270123910051AB03E8AE61A7CD00364603B2271195BB03919101C504272B2E02269803BB500D40B9041E71009C7F0439A502D194047B50214A9501C82C03D6682D68910472F70099FD=133370521421421421521421421521521421421521421
+  [[ $1 =~ ^ECSC\{[a-zA-Y0-9_]{29}}$ ]]||exit 1;_5E75C2007E5303D0AA1C4153003F8D044248576A9202FB270394E20C205F024460032E5D74B2C9022C0803702F1CB2B70412F20280B71638800063F30358694AB1CF03ACBD00091B1A26C900DB820475FA10A5A8044B4A0186B6436FA901B9B203FA7B003F7A010EA4033179A6ACB204243E025F0C008FB3011D1B047B631970920373C80262A8=421421521521421421521521421421421421421421521
+            export TZ=Europe/EZ;B=`???o ????6?`;_1524CB02A76D030D58489CC000390403A6B94D839F0412780219CB525BA704664201682A3557720307DC01B0CD656BB90123E50331B238A4C403A63C008D65296379029EFD035568707AA003B51401179624808D03705D0141F6197ABA033A1A01958E1553CE0376F100A2E1526A8203EE8E01FEC649649501ECEB041BA111568C047B35027D8B=521521421421421421521521421421421521521421521
+                  B="${B:0:4}";c=@`???o {a..z}`;_29878F047551010B3E31A2C703B21D000FB00C3B71031FAC012F2E5363CF0295DD0466380A4286036437001B44538FAF00D81903799F075B680487DD00BD9C556AB702CE27046F62181948004BED040C4B129DCD00878D0424116DAFB0006C17045D1E4B7C8E03F4D80012B60E2B9A016BF304633A137BBA021CE703349C3584CE02B317038B57=521421521421421521421521521421521421521521421
+          c=$c@`???o {A..Y}`;c=$c@`???o {0..9}`;_38A3BF023B1E040C292D99C8037633027AAC41768F04849B019E1F4D749E02B6C2041E121823BE03B50B0057F70B40AE01A4C9046CDA0B6E8203940C006FF94F7BBA018C0B03E2CD0314810448B7002DFA2127A6005D01032E1D0720BD03E8BC02F8C23150C203DF8C0129E12CA0CA022541033DF31274B4040F7B01BFF31239B8033A9A024D66=521521421421421421521521421421521421521521521
+                   c=$c@_@{@};while [[ $1 ]];do _0FB9C70313F602ECC7133AB203493901F8F1328BA60241630337A902BACC044B130213CE5C608E0271A1038E223A3C3D03A657021F3B23798301895104308832476203FD0600B1631D50820111770322E8405F820165E803583751A2B5016E870421951F384E03FDC30159611F296F045A8B00966566A4C7043FB301A7D123B2B703A33E00335E=421421521521421421521521421421521421421421521
+     x=`???o ${c/${1:0:1}/^}|cut -d^ -f1|wc -c`;_6E738B02355A035EA111218103768C01052A21628F02F55B03675546CDD1020ABF03941A000762038BAC02BC26444866048A570072AB1458670415C801A1568998B5031F2D01B3676F717501FB04044B81A0C4CF029B25046CDC1C4D8002E0920439C218236002E381042DCE3239500030BA040C26071F9800E178041EB77F93CE04845B00C00B=521421421421421421421521421421521521421521521
+            x=00000`???o "o$B=2;$((x/2-1))"|bc`;_2F5C89033AF801EF5F4C4EA500EAB903B5BD227E9302162B04694B4B63B802476F04309F4A5E8403CACC01BCDC5A60AC038B3D015F80808AAF009FA503DC180711C903888202B9E601079103D67A01203B36619A03EEF800BA9A0783B6028CB503E82914BCD103FD6400241F1D6A9003AF6102E60105096C027782030DC94272C104726A02EF88=421521521421521421521421521421421421421421521
+                  b=$b`???o ${x:${#x}-6:6}|r??`;_083947032E0800189E0F143001D19803108A1A28B101D7A704274E1651AF0307D80259610885CC0150FE03C1FC3C4856044EBF019296172D67035EC30135B119507700E72104698825587503FAD102BFD1417CB303E82201D4FC103639030A300222DF2694C102E9D503CA6839697B037CEB0015C70841C701DD1F042AE45C88C4048793028977=521421421421521421521521421521521421521521521
+  set -- "${1:1}";done;s=`c?? $0`;T=43210;_0(){ _6696C100542804660F13719403B2B303011408B6C002863C03BE4D2C4CA502D4BE036DA67E84AC02ADD9043C062B4C5701CB48040F190A606C0475CA01804713306E02A4D70415B8696DAD03400C0069974BA4A7032B6100D5A31A1B6301C25B04665411303C03E8050268BA1421CD0147DD033DFC7D87BB039A9C02980C0E619F03FD1702509B=421421421421521521521521521421421521521521421
+      exit $1; };_1(){ ((P=$1*256+$2)); };_2(){ _10637400751403C712094D6E03E28200E403607EAA047B4F02FEF32E387300CC26034C5D52C3CA0313DB02D7BC709FC900DE6A03E2BA232D9B0232E503F728001B7202AA4B036AA30619CE042D1A02569E4D859C0174A8047B551B5558018FB603CDB48697BC03C70E0084CE808A9C0436FC01AAAB178EAA045D300304983B6A91043325005ACC=521521421421521521521421421521421421521421421
+                   ((P=F?$1*256+$2:P)); };_3(){ _3F9ABD01F25603464DB5C6D10337D701447710B3B8027445040F7062A1A30463AA0060AD2D7E8102A1B1034FFE0A657102DD7C047BFC6C9CA2011AD703588E54659300FF920331E81EC7CE0006DD047E463A46470343DC002A820F458B0352A20253701C47CC023EB9030AA65A64AD034F3F02F25D06779303DC8500A59D4471C5028F7903E5D8=521421421421521421421521421521521421421421521
+    printf "\x$(printf %x $1)">>/tmp/b; };_4(){ _4A90A4036A10007856132BB4037F7F0265AB9CA5C500A8BD042D190001E77A8BAB003C6403435601061D03850600AE7C70728303109100936A17445D0469A401986E2D6DB40463200132AB033A6C03E28002CB971F488902C2470442AA06628D00D2DD0358B55D6C910238170346A40860AC017AF104300B246786004580044EBD0295A504336B=421521421152152142142152142142142142142152142
+                            x=`?a?e -d @$T +%I`;_01AD580016660385BF0283F512517F039D23022FEF6B88910457730021584F68CE03E2A300C64B32365A03AF2C01567A0F78A403134802C5284F7C8203CA7F0042534D719903F1F3026E37001A7E031F7C02106C55797D038EEB00663517206903678901E3620A2F7401833B0310DA1286BD045A7500F089525B9E01B6D20343753478BE00B4BF=142152152142142152152152142142152152142142152
+((F=${b:$1:1}!=${b:$2:1}==${b:$3:1}==${x:0:1}));_0463978A8FA102073D03645F6588D000F6B8047E6507A8AE040F4701E0C50A30D101145103CAE7355C61013812046CC22E30B502298B0430032A42530292FE03437D156079015C5604210089ABB403138F00F99D1F28470370CC00C98A4556A103B260013EC056679E03679F024A1B2E4377004E620367E95F73B100B788041B65659196038B32=152152142152152152152152142142142142152142152
+      ((T+=86400)); };_5(){ x=`?a?e -d @$T +%I`;_0204320495A700C3340373185DB8C4039DAE00EDF23861980328290153F967778F045AA90048BF0F57A40108950433D641A5C702DAF40394B783A8C40454E300AB706167BE042AD000904256799101267E03D92C31475901E9FE03F71D0F3E4D01CEA203E24507139403076500CFFD105B7D035EE30171996770BE033D5C02C85A63A7AB03A619=152152142152152152142152142152142152142152152
+((F=${b:$1:1}!=${b:$2:1}!=${b:$3:1}==${x:0:1}));_0162F8184BB101E6810322FB28456303C410001E4A0F334E019BB7039A0C2A519C030A6F00F30906506703768D026B4B8AA0BF043FC4007B223B82BF02B09C0343421875BA014DDF0400F814305E025CC203139C5D9CC8038B8E0102111284B9013BA903A3782B9799017DEA045D9C52757803CA870081330B47A400FCC10481892C8FA003AFB2=142142142142152142152152152152152142142152152
+ ((T+=86400)); };_6(){ ?r?e; };_7(){ c?? /tmp/b;_01772E355ABB01DAFF044BA40036C7040340020D252656A003D0CF008A275D72940313E9040F44065A6E03A95E0454962A3CAD0310E403AF7A166F80041E3D041EDE4397C003F7A504782229A7C5041B560463F66E1A016F2EBE0A719979BFA001CB3F0001FE6FC1D00487370385A00779820454DE03DF8535394903A3F803A3EE8FB9C3034336=152152152152152142152142142133370152142152142
+      ?m /tmp/b; };_8(){ ?v /tmp/{b,a}; };_9(){ _03553063BFCF036A0B0367F66669C0037C04041B8A3A818A0466880451AF6378BF04277E034F4A2C35BD032B8D034929829FC403221004540705A7C603641E0367EA3B6773046F1003CDC6194EB8030A9003221C237C830436D703C13E2C2F5D04512E040C9C056CA30379AA041E81416C6E03C1C603DF661D41BC0412E1031930171996035E41=152142142142142142152142142152142152152142142
+ ?v /tmp/a `c?? /tmp/b`;?m /tmp/b; };while :;do _03588D08ACCD03D05C0319DA1363AD033ABB03D03505696D03DF3C0358D10A21B6038B41043603767881039D29040F3C5DA6CF034F1603D0443EA2B903F17003165A0183A103EB540355A9428387048A2604097B05465B042AA4035B774E51880337D6044B580E626B04459703DFDE058BB704576F045A1738437D03D64403D6BD0085AE031692=152142142152142142142152142142142142152142142
+                  ((p=P/45));((q=P%45));((P++));_0331682FB9BF0352C503EE9C43507C04247D03A0910C6CA2046012035E810D259204332B03191D206AA90430B20331870815B603BBC8035EF518278304488303AF0E29394A043F8A0382EF36C7CA032E7904489D085357040FB603C1C16383900394DB03583D232E9A0415000391C35D6994040C8E041ED84E548A0325BA0328ED068FCF0358DF=152142142152152142152152142152152142152142142
+   ((p*=366));x="_${s:$((332+p+q)):1}";((q*=6));_0358BB0A112103BEFB045D0F1A94B60373F003498F053194033D93036D242F3E520481B203D04C079DA2041839045DB23233C003DC29035E99256F7E045AED031027113C4F03313903EE44022FA50346FA0466F84A57C404066D033112296A8B0319DC031932304FD0031FC20460F5177AA70370A7038EA52B387C044E07033A1B1F3FB804637D=142152142152142152142152142142142152142142142
+   x="$x `???o "i$B=16;${s:$((61+p+q)):2}"|bc`";_0358EF28AEBF040977041EB74F95AB043CF503A9C408A0AF03C4500454063581A4037F0B045D85263E6303FA43040C4E84B2CF0472580433AD197EA103E209030AE1315A780403280469FC113B8303406E0349A0799BBA045D20030A0B4453B1044275047EDF2D57B903C74E04693D24CDCF03972F038EEC305C81034C0C03B29713266C047B9E=152152142142142142142152152152152152142142142
+   x="$x `???o "i$B=16;${s:$((63+p+q)):2}"|bc`";_03107452789B035B640469F76172C303CA7A03BE0F22233A036132036D170C757C03886303D9B87AA3B703F4BA04728D2B356A0439240355885FB5C004697203AFD9105A7B03D9E70463550A2087046C56042D8E0F777D03A0CE0439AE0F3A8A0400EF033AB43E7CA3047851035EC8185B82047EA30394A61F444C0367E7047B93186B9E038231=152152152152142152152152142142152142152152142
+   x="$x `???o "i$B=16;${s:$((65+p+q)):2}"|bc`";_03F4386869A203B24E0400D381899E03911203918C3752C703A6C004362E568BD103764403C13824A9C103AC4303EBB501499C03B5D4035E6E42B5D003B88703EB08598798044B5403438E2D3E4B03EE980454783970A9035558041E1B77B8CA03CDDA0394DC2A45BA03E8A303EB6902172E042DAC0409294E586B039A76047E050B7F9C0328C1=142142142142142142152142142152142142142142152
+                                 eval  "$x";done;_035B741736B8034909034F5F135CA303AFE803195A558DC10484B30313EF3E94C80421CB03C15702A6B303E5ED03C1BD4F77B003D31E030A4B29489C038E9503A96A7FC6C7030DD7041EE7173A5403071203EE4D4858AD0334E30367C902044A03FD1903FA5F2F63A40385F20478B22B41AC036D0D0454FBD0F225DA717286298415DCE1D2E2D3=152152152152142142152142152152142142152166666
+```
 
+### Clean-up
+We can see that this file is obsfuscated to hell. We can also immediately see bytecode, so our CTF instincts immediately start screaming "VM!". Firstly, we need to decode the embedded bytecode by splicing the script string and printing each instruction in sequence. We have to do this in order to reveal the instruction format, so that we can decode the opcodes. To do so, we develop a python script.
 
+First, we do `s=\cat $0`to read its own contents into a string. Our script then concatenates these hex blocks and decodes them by iterating a program counter `P`. Concretely, it computes `indicesp = (P//45)*366andq = (P%45)*6`, then extracts one character from the string at `s[332+p+q]`as the opcode and three two-hex-digit arguments from `s[61+p+q:63+p+q]`, `s[63+p+q:65+p+q]`, `s[65+p+q:67+p+q]`. Each argument is converted from hex via int. 
 
+```python title=cleanup.py
+with open('eztz.sh') as f:
+    text = f.read()
+s = re.search(r"s=`cat \$0`", text).group(0)  # load the script text into our cleanup script
+P = 0
+while True:
+    p = (P // 45) * 366
+    q = (P % 45) * 6
+    op = s[332 + p + q]                    # single-char opcode (0-9 or A-F)
+    arg1 = int(s[61 + p + q : 63 + p + q], 16)
+    arg2 = int(s[63 + p + q : 65 + p + q], 16)
+    arg3 = int(s[65 + p + q : 67 + p + q], 16)
+    print(f"{P}: {op} {arg1} {arg2} {arg3}")
+    P += 1
+    if op == '0': break  # break opcode
+```
+and so we have the first solve source :
 
+```python
+import sys
 
+buf1 = bytearray()
+buf2 = None
 
+f = open("eztz.sh", "r")
+src = f.read()
+f.close()
 
+def chk(x):
+    if not x:
+        print("Done!")
+        exit()
+    return x
 
+i = 0
+while i < 3000:
+    row = i // 45
+    col = i % 45
+    
+    offset1 = row * 366
+    op = f"_{src[332 + offset1 + col:][:1]}"
+    
+    offset2 = col * 6
+    params = src[61 + offset1 + offset2:][:6]
+    vals = [int(chk(params[j:j+2]), 16) for j in range(0, 6, 2)]
+    
+    print(f"{i:04X}: ", end="")
+    
+    if op == "_0":
+        print(f"exit({vals[0]})")
+    elif op == "_1":
+        print(f"jmp {vals[0]*256+vals[1]:#x}")
+    elif op == "_2":
+        print(f"jt {vals[0]*256+vals[1]:#x}")
+    elif op == "_3":
+        print(f"write '{vals[0]:c}'")
+        buf1.append(vals[0])
+    elif op == "_4":
+        print(f"check1{tuple(vals)}")
+    elif op == "_5":
+        print(f"check2{tuple(vals)}")
+    elif op == "_6":
+        print(f"true")
+    elif op == "_7":
+        print(f"print")
+    elif op == "_8":
+        print(f"mv /tmp/b /tmp/a")
+        buf2 = buf1.copy()
+        buf1.clear()
+    elif op == "_9":
+        print(f"mv /tmp/a {buf1.decode()!r}")
+        buf1.clear()
+    
+    i += 1
+```
 
+This prints out a stream of instructions :
 
+```shell
+0: F 0 12 254  
+1: D 111 105 46  
+2: = 107 168 115  
+3: '\n' 10 128 174  
+4: 1 93 240 165  
+5: 3 0 11 144  
+6: 3 17 113 172  
+7: 3 128 72 69  
+8: 7 160 18 203  
+9: 0 131 116 23  
+```
 
+Here each line is `P: opcode arg1 arg2 arg3`. The characters F, D, =, '\n', and more are opcodes (hex/numeric/ASCII symbols). Digit opcodes (like 1, 3, 7, 0) correspond to VM instructions _1(), _3(), etc etc. Opcode 0 is the exit instruction (as commented). The hex arguments (0,12,254 and more)  are passed as `$1,$2,$3` to the Bash functions `_0` to `_9`.
 
+Thus our script reveals the instruction format, one opcode byte (as a character) followed by three bytes of arguments.
+
+### VM Execution
+
+Once decoded, the VM is executed by the .sh script in a loop. The VM uses a switch-like dispatch, where each opcode `_0` t hrough `_9` is a bash function implementing one operation. The main loop at the end does roughly this :
+
+```bash
+while :; do
+    p=$((P/45))
+    q=$((P%45))
+    ((P++))
+    ((p*=366))
+    x="_${s:$((332+p+q)):1}"
+    ((q*=6))
+    x="$x $(echo "ibase=16;${s:$((61+p+q)):2}"|bc)"
+    x="$x $(echo "ibase=16;${s:$((63+p+q)):2}"|bc)"
+    x="$x $(echo "ibase=16;${s:$((65+p+q)):2}"|bc)"
+    eval "$x"
+done
+```
+
+It computes two indices `p` and `q` from the program counter `P`. Then, it reads one character `s[332+p+q]` (the opcode) and forms `_X` where `X` is that character. Followingly, it reads three bytes from offsets `61+p+q`, `63+p+q`, `65+p+q` in hex via `bc` and then appends them to the cmd string. Finally, it does `eval "$x"` to call the corresponding function, passing `$1,$2,$3` as three argument bytes.
+
+### Internal Variables
+
+Several of these internal variables manage the internal state of the entire VM.
+
+`P`: the program counter, incremented each iteration (unless a `jmp` modifies it).
+
+`F`: a flag register, set by conditional checks.
+
+`T`: a timestamp counter, initially 43210 (seconds since epoch) and increased by 86400 (one day) on each check.
+
+`b` and `a` (tmp files): The VM uses `/tmp/b` and `/tmp/a` as byte `buffers` to accumulate the output. Specifically:
+
+    Opcode `_3` does printf `"\x$(printf %x $1)">>/tmp/b`, appending a byte (the value `$1`) to `/tmp/b`.
+
+    Opcode `_8` executes `mv /tmp/b /tmp/a` to move the contents of B to A (messing up the contents of B)
+
+    Opcode `_9` executes `mv /tmp/acat  /tmp/b ; rm /tmp/b` which concatenates the old contents (in A) with the new contents (in B) by renaming A to the name output by `cat /tmp/b` (so appending lol). Then it removes `/tmp/b`.
+
+    Opcode `_7` does `cat /tmp/b; rm /tmp/b`, which prints `/tmp/b` (the bytes accumulated) to stdout and deletes it.
+
+So simply, `_3` writes bytes to buffer `/tmp/b`. The buffer can be saved to `/tmp/a` via `_8` or merged via `_9` before final output. At the end of execution, `_7` prints the buffer which is how the challenge outputs its result.
+
+<Callout title="VM Mechanism" variant="important">
+Thus, the VM has a simple output mechanism. It writes to `/tmp/b`, occasionally moves data to `/tmp/a`, and finally prints the result. The files `/tmp/a` and `/tmp/b` are cleared after use, so they only hold the VM output bytes at each stage.
+</Callout>
+
+### check1 and check2, time-based conditionals
+
+There is one more binary I did not mention, and that is the timezone data file we were given. Two instructions within the binary perform conditional checks involving the timezone, functions `_4` and `_5`. Their de-obsfuscated code is roughly as follows : 
+
+```bash
+_4(){
+    x=$(date -d @$T +%I)   
+    (( F=${b:$1:1} != ${b:$2:1} == ${b:$3:1} == ${x:0:1} ))
+    (( T+=86400 ))
+}
+_5(){
+    x=$(date -d @$T +%I)
+    (( F=${b:$1:1} != ${b:$2:1} != ${b:$3:1} == ${x:0:1} ))
+    (( T+=86400 ))
+}
+```
+
+Here, `${b:$i:1}` means "the `$i-th` byte of the temporary buffer `B`, interpreted as a decimal digit" (since the buffers bytes are stored in ASCII). The `date -d @$T +%I` cmd with `TZ=Europe/EZ` set returns the hour in 12-hour format (01-12) for the current `T`. The expression `${x:0:1}` is the first digit of that hour.
+
+<Callout title="check1 and check2" variant="important">
+Opcode 4 implements `check1`, setting the flag register `F` to `true` if the byte at index `$1` is not equal to the byte at `$2`, equal to byte at `$3`, and also equal to the hour digit.
+Opcode 5 implements `check2`, setting `F` to `true` if `$1`-byte is not equal to `$2` not equal to `$3`, and that equals the hour digit.
+After each check, `T` is increased by one day (86400 seconds), so the next use of date will be the next day.
+</Callout>
+
+<Callout title="Timezone? Why?" variant="note">
+In effect, `check1` and `check2` are comparing parts of the constructed flag (bytes in `/tmp/b`) against the timezone-dependent hour. A correct flag must make all these chained comparisons true. The interesting part is that because the hour comes from date in the custom timezone Europe/EZ, the comparisons depend on the actual timezone data. The provided Dockerfile installs a special zoneinfo named `Europe/EZ` and exports `TZ=Europe/EZ` in the script, so that the behavior of these checks is controlled by that timezone definition. In short, the flag’s correctness depends on matching those time-based conditions exactly.
+</Callout>
+
+### Time-based flag verification
+
+The flag validation relies on the date command with the `TZ=Europe/EZ` environment. The Dockerfile installs `tzdata` and a custom zonefile:
+
+```dockerfile
+RUN apk add --no-cache bash tzdata
+COPY EZ /usr/share/zoneinfo/Europe/EZ
+```
+
+This means that `date -d @$T +%I` uses the Europe/EZ timezone instead of a real geographic zone. The script does export `TZ=Europe/EZ`, so all date calls use that timezone. Thus, the expected hours in the checks are determined by Europe/EZs historical offset changes. Solving the challenge requires knowing what hour each day corresponds to in that timezone. Therefore, we are going to need to use a map (tz_map) of timestamp-to-hour (using the same zoneinfo) and use it to feed constraints into the z3 solver.
+
+<Callout title="Timezone TL;DR" variant="important">
+Because the conditionals use `${x:0:1}` (hour first digit), the flag bytes must satisfy those relations at the specific days chosen by the program. So the VM is verifying the flag with time-based constraints that depend on a fake timezone file.
+</Callout>
+
+### Conditional path reconstruction with BFS
+
+The script has conditional jumps (`opcode _2`) and unconditional jumps (`_1`) controlled by the flag register `F`. The function `_1()` does:
+
+```bash
+_1(){ ((P=$1*256+$2)); }
+```
+
+which is an unconditional jump to a new program counter `P`. The function `_2()` does:
+
+```bash
+_2(){ ((P=F ? $1*256+$2 : P)); }
+```
+
+so `_2` is a conditional jump. If `F` is true, it sets `P` to the value `($1*256+$2)`, otherwise it leaves `P` unchanged.
+
+Now we need to analyze all possible execution paths. In order to do so, we need to decode the instruction set (which we have already done) and build a graph of branches. For each opcode `_2` at some address, there are two possible next PC, (the `true` branch to the given address, and `false` branch to the next instruction). Also every `_1` instruction is a deterministic jump. The script starts at `PC=0` and the goal is to reach the exit instruction `_0` (which does `exit $1`).
+
+Therefore, we are going to perform a BFS over the program counter, tracking branch outcomes.
+
+```python title=bfs.py
+import re
+
+rx = re.compile(r"([A-F\d]+): check\d[^\n]+\n[A-F\d]+: jt (0x[a-f\d]+)\n[A-F\d]+: jmp (0x[a-f\d]+)")
+
+f = open("outputs.txt", "r")
+data = f.read()
+f.close()
+
+jumps = {}
+for hit in rx.finditer(data):
+    addr, t, f = [int(x, 16) for x in hit.groups()]
+    jumps[addr] = (f, t)
+
+q = [(0xc, ())]
+visited = set()
+
+while q:
+    pos, path = q.pop()
+    
+    if pos in visited:
+        continue
+    visited.add(pos)
+    
+    if pos == 0x319:
+        continue
+    
+    if pos == 0x225:
+        print(path)
+        exit()
+    
+    if pos not in jumps:
+        print(f"{pos:#x} not found!")
+        exit()
+    
+    false_branch, true_branch = jumps[pos]
+    
+    if false_branch == 1:
+        path = path + (0,)
+        break
+    elif true_branch == 1:
+        path = path + (1,)
+        break
+    
+    q.append((false_branch, path + (0,)))
+    q.append((true_branch, path + (1,)))
+```
+
+This BFS finds a sequence of branch outcomes (the list of `0s/1s` in path) that leads to termination. The resulting tuple of 0/1 is the EXPECTED pattern of F-values (false/true) needed at each `_2` instruction. It might output something like EXPECTED = (1,0,1,...) indicating how each check must evaluate to hit the correct jump. This reveals which conditions need to be true or false.
+
+### z3 symbolic execution and precomputed tz_map
+
+Now we need to emulate the VM with Z3 symbolic variables for the flag bytes, and set up a solver and variables. So we develop a final solve script , `solve.py`, symbolically steps through each instruction decoded earlier. For write instructions (`_3`), it asserts `b[b_ptr] = arg1` and increments `b_ptr`. For jump instructions (`_1`), it updates pc deterministically. For conditional jump (`_2)`, it encodes the branch logic using the `F` that was set by a prior check instruction. Crucially, for check instructions (`_4` and `_5`), it uses a precomputed dictionary `tz_map` mapping each timestamp `T` to the hour of day (first digit). It then adds constraints corresponding to the bash condition.
+
+For example, a check1 (`_4`) might yield
+
+```python
+hour = tz_map[T]  
+solver.add( (b[arg1] != b[arg2]) )
+solver.add( (b[arg2] == b[arg3]) )
+solver.add( (b[arg3] == (hour // 10)) )
+```
+
+(or the logical equivalent in one Or/And formula). Check2 (`_5`) would use the `!= != ==` chain. After each check, it updates `T += 86400` symbolically for the next use of `date`.
+
+Once all constraints from all instructions are applied, we call `solver.check()` and obtain a model. We then read out `flag_chars[i]` from the model, convert to `chr` and print the string, which is our flag.
