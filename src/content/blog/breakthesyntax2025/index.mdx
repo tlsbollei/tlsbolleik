@@ -16,8 +16,6 @@ Break the Syntax was a pretty cool CTF. Sitting comfortably around intermediate 
 
 ## rev - the Last Xor in Lithuania (452 points)
 
-### **high-level overview**
-
 we are given a binary called **a.out**  and an assignment which hints towards XOR (Exclusive OR) operations. from the Break the Syntax 2025 CTF, this was the rev task with the least amount of solves, which is surprising due to its simple nature, as opposed to other rev tasks.
 
 ### **control flow architecture**
@@ -37,8 +35,6 @@ int main(int argc, char** argv) {
 this is a single entry point into decryption and validation logic.
 the function ```sub_40119d``` sets up the xor-based stage exec.
 
-
-### **sub_40119d**
 
 inside of the `sub_40119d` function, we observe :
 
@@ -62,8 +58,6 @@ void sub_40119d(char* input) {
 }
 ```
 
-### **xor decryption logic**
-
 ` sub_401149`   , or as we renamed it, ` xor_decrypt` , applies a basic in-place xor over a fixed-size buffer:
 
 ```c
@@ -78,8 +72,6 @@ void xor_decrypt(uint8_t* data, size_t len, uint8_t key) {
 
 starting at `0x404c60`, the binary defines a flat array of 48 function pointers. each points to an encrypted memory section (for example, `f_0_section`, `f_1_section`, ...). these regions contain encrypted functions that validate one byte of input each.
 
-#### pointer layout:
-
 ```c
 0x404c60 → 0x4073d2
 0x404c68 → 0x40749b
@@ -88,7 +80,7 @@ starting at `0x404c60`, the binary defines a flat array of 48 function pointers.
 
 none of these function blocks are valid code until decrypted. after decryption, the first few bytes conform to a typical function **prologue**. this is the key to decryption, remember
 
-### **decrypting stage 0: key discovery**
+### **decryption and flag**
 
 to decrypt the first block at `0x4073d2` , we brute-force the xor key until we find a valid x86 function signature. one such example ->
 
@@ -100,9 +92,6 @@ to decrypt the first block at `0x4073d2` , we brute-force the xor key until we f
 == mentioned prologue.
 
 only one key yields this result: `0x42` (ascii 'B'). so the correct first byte of input is `B`.
-
-### **flag recovery**
-
 each stage uses a predictable function header and the validation logic is simple. so our plan is to :
 
 1. extract the encrypted block for each function pointer
@@ -183,8 +172,6 @@ execution starts at line 2 with:
 * line 4 prompts the user to input an 8-character decryption key, stored in b$
 * line 10 initiates validation and transformation routines
 
-### loading the encrypted data
-
 the subroutine at line 1000 opens and reads the secret file:
 
 ```
@@ -200,8 +187,6 @@ the subroutine at line 1000 opens and reads the secret file:
 ```
 
 the important part here is that the encrypted contents are read into the string a$
-
-### key validation logic
 
 key validation is performed at line 4000:
 
@@ -221,9 +206,6 @@ key validation is performed at line 4000:
 
 
 -> this is the core of the key (secret passphrase) validation. only keys where the 8th byte equals the xor of characters 6 and 7 are accepted.
-
-
-### machine code routines
 
 the program defines two short 6502 subroutines via a data block at line 10000 and loads them into memory address $c000 (decimal 49152) using 
 
@@ -332,17 +314,8 @@ we can see that each character is decrypted by applying two xor operations:
 then dk is updated to the last temp for the next iteration. this is a simple xor-based stream cipher seeded by the dk (decrypted key) from the user supplied key
 see it now?
 
-### keyspace weakness and brute-force strategy
-
-
-
-#### keyspace flaw
-
 * only the least significant bit of each of the first 7 characters affects dk
 * this gives only 2⁷ = 128 possible dk values
-
-
-#### validation weakness
 
 
 only constraint on characters 6–8 is:
@@ -353,7 +326,7 @@ key[7] == key[5] xor key[6]
 
 the other characters can be freely selected to match a desired lsb pattern
 
-#### brute-force plan
+#### brute-force and flag
 
 i tested all 128 possible dk values until printable ASCII text was found.
 
@@ -379,6 +352,7 @@ print(flag)
 prints out the flag 
 
 `BTSCTF<M0N3Y-I$-HIDDEN-1NSI0E-THE-4M1GA>`
+
 
 
 
