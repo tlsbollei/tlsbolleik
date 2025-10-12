@@ -10,7 +10,7 @@ image: './bts25.png'
 import Callout from '@/components/Callout.astro'
 import { Icon } from 'astro-icon/components'
 
-Break the Syntax was a pretty cool CTF. Sitting comfortably around intermediate level difficulty, however I really loved the rev challenges, they were so unique and such a nice breath of fresh air. I managed to full solve all rev tasks quite quickly, and moved on to help my teammates. We competed as part of [rakuz4n](https://ctftime.org/team/383658), which is a fun team made up of friends that I captain.
+Break the Syntax was a pretty cool CTF. Sitting comfortably around intermediate level difficulty, however I really loved the rev challenges, they were so unique and such a nice breath of fresh air. I managed to full solve all rev tasks quite quickly, and moved on to help my teammates with other categories. We competed as part of [rakuz4n](https://ctftime.org/team/383658), which is a fun team made up of friends that I captain.
 
 ![Full Solve](assets/fullsolve.png)
 
@@ -133,7 +133,7 @@ the challenge presents a .d64 commodore 64 disk image containing two files:
 
 we are informed that the message in **secret** has been encrypted using the logic implemented in **decrypt**, and that a passphrase is required to unlock it. our objective is to reverse-engineer the decryption process and recover the flag, which follows the format `BTSCTF<...>`.
 
-## disk image analysis
+### disk image and decrypt analysis
 
 we begin by examining the disk image using c1541 (a tool from the VICE emulator suite)
 
@@ -151,9 +151,6 @@ we extract the files for offline inspection
 c1541 disk.d64 -read "secret" secret.seq
 c1541 disk.d64 -read "decrypt" decrypt.prg
 ```
-
-## **analyzing the ``decrypt`` program**
-
 
 ``decrypt`` is a commodore basic v2 program that loads and runs automatically. it performs the following actions:
 
@@ -173,7 +170,7 @@ c1541 disk.d64 -read "decrypt" decrypt.prg
 
 5. uses that dk in a loop to decrypt the contents of a$, byte by byte
 
-## program control flow analysis
+### program control flow analysis
 
 execution starts at line 2 with:
 ```
@@ -382,6 +379,7 @@ print(flag)
 prints out the flag 
 
 `BTSCTF<M0N3Y-I$-HIDDEN-1NSI0E-THE-4M1GA>`
+
 
 
 
