@@ -953,9 +953,13 @@ else {
 
 Jump detection is `Up` (`0x49`) or `Z` (`0x19`).
 
-If jumping and `this[0x1d] == 1` (Big, mario) and key `L` (`0x0B`) is `down` forces vy = `-4.0f` (`0xC0800000`) every update tick while the keys are held. That overrides gravity and any existing vy.
+If jumping and `this[0x1d] == 1` (Big) and key `L` (`0x0B`) is `down` forces vy = `-4.0f` (`0xC0800000`) every update tick while the keys are held. That overrides gravity and any existing vy.
 
 Else, it runs normal jump/airborne logic with gravity (`vy += 0.25` nerfed by `MAX_VERTICAL_SPEED`). There’s also a branch granting a short upward kick (`this[0x1c] = 8`) under a specific predicate (the decompiler shows `std::all_of` on a collision buffer), but this cheat path bypasses all of that.
+
+<Callout title="warning" variant="important">
+The flag `this[0x1d] == 1` (becoming "Big") is achieved by walking over a beetroot which is spawned after you head-smash the lucky block on the left side of the platform. Refer back to the picture - the beetroot spawns from the lucky block that you can see is already used.
+</Callout>
 
 Why does it work? Well, gravity is applied per frame in this section. The cheat path reassigns `vy` to `−4.0f` every frame after any gravity add that would otherwise occur, as long as the key condition holds true. Result? Continuous ascent/hover. At the end we find this stonk :
 
@@ -978,6 +982,7 @@ All of these respective cheats had to be found among a massive 700 line pile of 
 </Callout>
 
 ## misc - Blue Mouse (33 solves)
+
 
 
 
