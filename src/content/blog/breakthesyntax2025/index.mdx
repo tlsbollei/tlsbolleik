@@ -76,7 +76,7 @@ void xor_decrypt(uint8_t* data, size_t len, uint8_t key) {
 
 ### **function pointer chain**
 
-starting at `0x404c60` , the binary defines a flat array of 48 function pointers. each points to an encrypted memory section (e.g., `f_0_section`, `f_1_section`, ...). these regions contain encrypted functions that validate one byte of input each.
+starting at `0x404c60`, the binary defines a flat array of 48 function pointers. each points to an encrypted memory section (for example, `f_0_section`, `f_1_section`, ...). these regions contain encrypted functions that validate one byte of input each.
 
 #### pointer layout:
 
@@ -236,7 +236,7 @@ the program defines two short 6502 subroutines via a data block at line 10000 an
 2040 next
 ```
 
-the first subroutine (at``` $c000```) performs xor:
+the first subroutine (at`$c000`) performs xor:
 
 
 ```
@@ -246,7 +246,7 @@ sta $fd      ; store result
 rts
 ```
 
-the second subroutine (at ```$c007```) performs a 1-bit left shift and merges in a new lsb:
+the second subroutine (at `$c007`) performs a 1-bit left shift and merges in a new lsb:
 
 
 ```
@@ -260,7 +260,7 @@ rts
 
 ### computing the initial decrypt key (dk)
 
-subroutine 1500 computes the initial value used for decryption, stored at ```$fa``` (memory address 250):
+subroutine 1500 computes the initial value used for decryption, stored at `$fa` (memory address 250):
 
 ```
 1501 poke 250,0
@@ -329,8 +329,8 @@ for byte in secret_data:
 
 we can see that each character is decrypted by applying two xor operations:
 
-1. ```temp = byte xor dk```
-2. ```output = temp xor 0x76```
+1. `temp = byte xor dk`
+2. `output = temp xor 0x76`
 
 then dk is updated to the last temp for the next iteration. this is a simple xor-based stream cipher seeded by the dk (decrypted key) from the user supplied key
 see it now?
@@ -360,13 +360,13 @@ the other characters can be freely selected to match a desired lsb pattern
 
 i tested all 128 possible dk values until printable ASCII text was found.
 
-after some bruteforcing... derived ```dk``` turns out to be 0x51
+after some bruteforcing... derived `dk` turns out to be 0x51
 
-i interpreted ```dk = 0x51``` as the LSB pattern of the key.
+i interpreted `dk = 0x51` as the LSB pattern of the key.
 this meant that the LSBs of characters 1–7 in the key must be:
-```1, 0, 1, 0, 0, 0, 1```
+`1, 0, 1, 0, 0, 0, 1`
 
-this gives us a constructed key ```122211Ap```
+this gives us a constructed key `122211Ap`
 
 running :
 
@@ -381,7 +381,8 @@ print(flag)
 
 prints out the flag 
 
-```BTSCTF<M0N3Y-I$-HIDDEN-1NSI0E-THE-4M1GA>```
+`BTSCTF<M0N3Y-I$-HIDDEN-1NSI0E-THE-4M1GA>`
+
 
 
 
