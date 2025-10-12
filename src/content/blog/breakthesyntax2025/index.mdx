@@ -109,7 +109,7 @@ oh wait, its reversed? O_o (think about why)
 
 final flag : 
 
-`**BtSCTF{D3CRYPT1NG_P4N_T4D3USZ_ON3_X0R_4T_4_T1M3}**`
+`BtSCTF{D3CRYPT1NG_P4N_T4D3USZ_ON3_X0R_4T_4_T1M3}`
 
 ## rev - c64 (441 points)
 
@@ -576,9 +576,143 @@ if __name__ == "__main__":
 
 Why does this work? Because the entire transformation is bijective, meaning that the high/upper nibbles are preserved, lower nibbles are altered only based off of known information, and the checksum S can be rebuilt.
 
-### Flag
+### flag
 
-`**BtSCTF{W0W_it_re4l1y_m3aNs_$0methIng!!:)}**`
+`BtSCTF{W0W_it_re4l1y_m3aNs_$0methIng!!:)}`
+
+## rev - Rainbombash Adventure (50 points)
+
+we're given a folder "rainbombashadventure-1.0-pc".
+
+the folder reveals 3 directories and an .exe file, .py file, .sh file.
+dissasembly and decompilation of the .exe file reveals nothing, and so does the analysis of the .py and .sh file.
+
+the /game directory reveals a file called script.rpy , which we can open in a text editor. we see something interesting at the end of the file ->
+
+```python
+label ending:
+    python:
+        import hashlib
+
+
+        flag = b""
+
+        
+        def xor(target, key):
+            out = [c ^ key[i % len(key)] for i, c in enumerate(target)]
+            return bytearray(out)
+
+
+        def key_from_path(path):
+            return hashlib.sha256(str(path).encode()).digest()
+
+
+        def check_path(path, enc_flag):
+            global flag
+            flag1 = xor(enc_flag, key_from_path(path))
+            flag2 = xor(enc_flag, key_from_path(list(reversed(path))))
+            if flag1.startswith(b"BtSCTF"):
+                flag = flag1
+                print(flag)
+                flag = bytes(flag).replace(b"{", b"{{").decode('ascii')
+                return True
+            if flag2.startswith(b"BtSCTF"):
+                flag = flag2
+                print(flag)
+                flag = bytes(flag).replace(b"{", b"{{").decode('ascii')
+                return True
+            return False
+
+
+        is_correct = check_path(nodes, bytearray(b'\xc2\x92\xf9\xf66\xe8\xa5\xa6\x17\xb6mGE\xcfQ\x90Mk:\x9a\xbb\x905&\x19\x8e\xc4\x9a\x0b\x1f\xf8C\xf4\xb9\xc9\x85R\xc2\xbb\x8d\x07\x94[R_\xf5z\x9fAl\x11\x9c\xbb\x9255\x08\x8e\xf6\xd6\x04'))
+    if is_correct:
+        rb "all cloudz smashed im the queen"
+        rb "i got 100% swag"
+        "[flag]"
+    else:
+        "Sadly, Rainbom Bash was too slow and wasn't able to smash all clouds."	
+    return
+```		
+
+above in script.rpy we’re given a complete graph of 20 clouds. the cost of going from cloud i to cloud j is in dist[i][j]. we need to find all possible tours that start at cloud 0, visit every other cloud exactly once and end back at cloud 0.
+
+this is a classic TSP - [Travelling Salesman Problem](https://en.wikipedia.org/wiki/Travelling_salesman_problem).
+
+"Given a list of cities and the distances between each pair of cities, what is the shortest possible route that visits each city exactly once and returns to the origin city?"
+
+i chose to do this the hard way - dynamic programming with bitmasking, specifically the [Held-Karp Algorithm]https://en.wikipedia.org/wiki/Held–Karp_algorithm)
+
+###  state definition 
+
+we define a 2d dp table ->
+
+```	
+dp[mask][v]
+```	
+
+where :
+mask is a 20 bit integer,  each bit i is 1 if cloud i has been visited
+v is the current cloud youre standing on 
+and dp[mask][v] is the shortest distance to reach cloud v, having visited all clouds in mask, starting from cloud 0
+
+this table stores partial solutions to subproblems 
+
+now i computed all possible previous clouds  u that couldve reached  v and take the shortest one ->
+
+```	
+dp[mask][v] = min over u in (mask - {v}) of [dp[mask ^ (1 << v)][u] + dist[u][v]]
+```	
+
+
+
+###  best case
+
+```	
+dp[1 << 0][0] = 0
+```	
+ 
+== starting at cloud 0, only cloud 0 visited, cost is 0
+
+now using ai i filled up the dp table and that computed every possible subset path efficiently
+
+with the filled dp table in our hands we can compute the shortest complete cycle ->
+```	
+min(dp[full_mask][v] + dist[v][0]) for all v ≠ 0
+```	
+
+this gives us the shortest tour that returns to the starting point - cloud 0
+
+to get the actual path, not just the cost, we store backpointers
+
+the result ->
+```	
+[0, 12, 15, 2, 1, 5, 11, 14, 17, 7, 19, 13, 9, 10, 3, 8, 16, 18, 4, 6, 0]
+```	
+this is our tsp result
+
+
+from the game code ->
+
+```	
+key = sha256(str(path).encode()).digest()
+```	
+
+but since we already know the path (tsp derived) ->
+```
+path = [0,12,15,2,1,5,11,14,17,7,19,13,9,10,3,8,16,18,4,6]
+```
+
+from the ending source code linked above we can identify that the encrypted blob (enc_flag) is a bytearray. we decrypt using ->
+
+```
+plaintext[i] = cipher_blob[i] ^ key[i % len(key)]
+```
+this means "for every byte in the encrypted blob, xor it with the corresponding byte in the sha-derived key, repeat the key if the blob is longer than 32 bytes"
+
+final output of decryption is consequently ourlag.
+
+
+`BtSCTF{YOU_are_getting_20_percent_c00ler_with_this_one_!!_B)}`
 
 
 
