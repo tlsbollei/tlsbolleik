@@ -76,7 +76,7 @@ void xor_decrypt(uint8_t* data, size_t len, uint8_t key) {
 
 ### **function pointer chain**
 
-starting at `0x404c60` , the binary defines a flat array of 48 function pointers. each points to an encrypted memory section (e.g., `.f_0_section`, .`f_1_section`, ...). these regions contain encrypted functions that validate one byte of input each.
+starting at `0x404c60` , the binary defines a flat array of 48 function pointers. each points to an encrypted memory section (e.g., `.f_0_section`, `.f_1_section`, ...). these regions contain encrypted functions that validate one byte of input each.
 
 #### pointer layout:
 
@@ -382,4 +382,5 @@ print(flag)
 prints out the flag 
 
 ```BTSCTF<M0N3Y-I$-HIDDEN-1NSI0E-THE-4M1GA>```
+
 
