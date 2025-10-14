@@ -646,13 +646,12 @@ dp[mask][v]
 ```	
 
 where :
-mask is a 20 bit integer,  each bit i is 1 if cloud i has been visited
-v is the current cloud youre standing on 
-and dp[mask][v] is the shortest distance to reach cloud v, having visited all clouds in mask, starting from cloud 0
+`mask` is a 20 bit integer,  each bit `i` is 1 if cloud `i` has been visited, `v` is the current cloud you are standing on 
+and `dp[mask][v]` is the shortest distance to reach cloud `v`, having visited all clouds in mask, starting from cloud `0`
 
 this table stores partial solutions to subproblems 
 
-now i computed all possible previous clouds  u that couldve reached  v and take the shortest one ->
+now `i` computed all possible previous clouds `u` that couldve reached `v` and take the shortest one ->
 
 ```	
 dp[mask][v] = min over u in (mask - {v}) of [dp[mask ^ (1 << v)][u] + dist[u][v]]
@@ -702,12 +701,12 @@ from the ending source code linked above we can identify that the encrypted blob
 ```
 plaintext[i] = cipher_blob[i] ^ key[i % len(key)]
 ```
-this means "for every byte in the encrypted blob, xor it with the corresponding byte in the sha-derived key, repeat the key if the blob is longer than 32 bytes"
 
 final output of decryption is consequently our flag.
 
 
 `BtSCTF{YOU_are_getting_20_percent_c00ler_with_this_one_!!_B)}`
+
 
 
 
