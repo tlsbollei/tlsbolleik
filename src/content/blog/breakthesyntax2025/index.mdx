@@ -1,8 +1,8 @@
 ---
 title: "Break the Syntax 2025 Writeups"
-description: "Intermediate level CTF with some pretty fun and unique rev challenges!"
+description: "Easier CTF with some pretty fun and unique rev challenges!"
 date: 05-11-2025
-tags: ['writeup', '2025', 'rev']
+tags: ['writeup', '2025', 'rev', 'easy']
 authors: ['tlsbollei']
 image: './bts25.png'
 ---
@@ -10,7 +10,7 @@ image: './bts25.png'
 import Callout from '@/components/Callout.astro'
 import { Icon } from 'astro-icon/components'
 
-Break the Syntax was a pretty cool CTF. Sitting comfortably around intermediate level difficulty, however I really loved the rev challenges, they were so unique and such a nice breath of fresh air. I managed to full solve all rev tasks quite quickly, and moved on to help my teammates with other categories. We competed as part of [rakuz4n](https://ctftime.org/team/383658), which is a fun team made up of friends that I captain.
+Break the Syntax was a pretty cool CTF. Sitting comfortably around high easy-low intermediate level difficulty, however I really loved the rev challenges, they were so unique and such a nice breath of fresh air. I managed to full solve all rev tasks quite quickly, and moved on to help my teammates with other categories. We competed as part of [rakuz4n](https://ctftime.org/team/383658), which is a fun team made up of friends that I captain.
 
 ![Full Solve](assets/fullsolve.png)
 
@@ -104,8 +104,6 @@ each stage uses a predictable function header and the validation logic is simple
 this approach yields a sequence of 48 xor keys, each independently discoverable :
 
 `}3M1T_4_T4_R0X_3NO_ZSU3D4T_N4P_GN1TPYRC3D{FTCStB`
-
-oh wait, its reversed? O_o (think about why)
 
 final flag : 
 
@@ -371,8 +369,6 @@ $ ./translator YAYY
 橄楓$
 ```
 
-From our findings we can immediately derive that the binary file intakes an ASCII string character, makes it undergo multiple arithmetic operations until it eventually turns into an unicode string.
-The mission is clear - we have an encoded message, that we have to decode. In order to do this, we have to first understand the underlying functionality of the "encoder", reverse the logic and decode our flag.
 The main function looks as follows :
 
 ```c title=main.c
@@ -402,14 +398,13 @@ The entry point, **main**, is simple. It :
 1. Reads the input string
 2. Processes it as 2 characters (bytes) at a time
 3. Converts each pair into a Unicode character
-4. Calls itself again with the next 2 characters. This is what is referred to as "tail recursion" - we can see it in the code, namely :
+4. Calls itself again with the next 2 characters by performing tail recursion, - we can see it in the code, namely :
 
 ```c
 return main(2, (void**)argv);
 ```
 
-However, it's not all sunshine and rainbows - it wouldn't have been a reverse engineering task if so after all :D
-The trick lies in how the script modifies the high and low nibbles of our string. Main truly functions more like this :
+The trick lies in how the script modifies the high and low nibbles of our string. The encoding works as follows :
 1. Reads 2 characters from input
 2. Calculates a suffix checksum on the rest of the string using **operations()**
 3. Computes a wide character (wchar_t) using a combination of high nibbles **a** and **b** (which are copied directly from input) and low nibbles of a and b, **modified by the checksum**.
@@ -640,7 +635,7 @@ this is a classic TSP - [Travelling Salesman Problem](https://en.wikipedia.org/w
 
 "Given a list of cities and the distances between each pair of cities, what is the shortest possible route that visits each city exactly once and returns to the origin city?"
 
-i chose to do this the hard way - dynamic programming with bitmasking, specifically the [Held-Karp Algorithm]https://en.wikipedia.org/wiki/Held–Karp_algorithm)
+i chose to do this the hard way - dynamic programming with bitmasking, specifically the [Held-Karp Algorithm](https://en.wikipedia.org/wiki/Held–Karp_algorithm)
 
 ###  state definition 
 
@@ -709,10 +704,11 @@ plaintext[i] = cipher_blob[i] ^ key[i % len(key)]
 ```
 this means "for every byte in the encrypted blob, xor it with the corresponding byte in the sha-derived key, repeat the key if the blob is longer than 32 bytes"
 
-final output of decryption is consequently ourlag.
+final output of decryption is consequently our flag.
 
 
 `BtSCTF{YOU_are_getting_20_percent_c00ler_with_this_one_!!_B)}`
+
 
 
 
