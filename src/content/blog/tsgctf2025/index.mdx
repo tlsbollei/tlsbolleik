@@ -896,8 +896,10 @@ because ```values``` is ```int values[SIZE]```, so the write target becomes ```w
 
 ![variable](assets/draw.png)
 
-therefore, the final plan is :
-1. write command string "sh\0" to ```values[0]``` at 0x4040c0 as little endian 32 bit int ```0x00006873``` = ```26739```, overwrite ```msg``` pointer to point to ```0x4040c0```, writing ```4211904``` at index -22 (see above), hijack ```puts@GOT``` to point to ```system@plt``` at index -40, exit loop with index -1 to pop shell 
+<Callout title="the final plan" variant="important">
+write command string "sh\0" to ```values[0]``` at 0x4040c0 as little endian 32 bit int ```0x00006873``` = ```26739```, overwrite ```msg``` pointer to point to ```0x4040c0```, writing ```4211904``` at index -22 (see above), hijack ```puts@GOT``` to point to ```system@plt``` at index -40, exit loop with index -1 to pop shell!
+</Callout>
+
 
 ```python
 from pwn import *
@@ -1116,7 +1118,7 @@ which is a cool anti-debugging check which forces ut to solve this offline stati
 
 ### alternate stack and handler for SIGILL and SIGSEGV
 
-the program sets up an alternate signal stack and isntall the same handler for SIGSEV (11) and SIGILL (4)
+the program sets up an alternate signal stack and isntall the same handler for ```SIGSEV (11)``` and ```SIGILL (4)```
 
 ```c
 unsigned __int64 sub_403F4F()
@@ -1263,7 +1265,6 @@ case 307656869LL:
   result = a3;
   break;
 c
-Copy code
 if ( v3 == 165945142 )
 {
   if ( *(_BYTE *)(a3[15] - 63LL) == 83 )
@@ -1283,7 +1284,6 @@ if ( v3 == 165945142 )
   }
 }
 c
-Copy code
 if ( v3 == 4211843 )
 {
   if ( *(_BYTE *)(a3[15] - 62LL) == 71 )
@@ -1298,7 +1298,6 @@ if ( v3 == 4211843 )
   return a3;
 }
 c
-Copy code
 case 307656851LL:
   if ( *(_BYTE *)(a3[15] - 61LL) == 67 )
   {
@@ -1317,7 +1316,6 @@ case 307656851LL:
   }
   break;
 c
-Copy code
 case 307656859LL:
   if ( *(_BYTE *)(a3[15] - 60LL) == 84 )
   {
@@ -1331,7 +1329,6 @@ case 307656859LL:
   result = a3;
   break;
 c
-Copy code
 if ( v3 == 263109988 )
 {
   if ( *(_BYTE *)(a3[15] - 59LL) == 70 )
@@ -1346,7 +1343,6 @@ if ( v3 == 263109988 )
   return a3;
 }
 c
-Copy code
 case 307656874LL:
   if ( *(_BYTE *)(a3[15] - 58LL) == 123 )
   {
@@ -1365,7 +1361,7 @@ from these values you can directly see the values spelling out ```TSGCTF{``` (84
 
 ### reconstruction of the flag
 
-the handler reads ```*(a3[15] ± offset)```. the checks span ```-64to +17```. this is consistent with:
+the handler reads ```*(a3[15] ± offset)```. the checks span ```-64 to +17```. this is consistent with:
 
 ```a3[15]  points at "base" = input + 64```
 
@@ -1381,8 +1377,9 @@ therefore:
 
 so the index is:
 
-```if expression is a3[15] - N → idx = 64 - N```
-
-```if expression is a3[15] + N → idx = 64 + N```
-
+```
+if expression is a3[15] - N → idx = 64 - N
+if expression is a3[15] + N → idx = 64 + N
+```
 reconstructing all gives us the flag, ```TSGCTF{Inv3571ga710n_1n70_BOF_Or13n73d_Pr0gramm1ng_a5_a_73chn1qu3_f0r_0bfu5ca710n}```
+
