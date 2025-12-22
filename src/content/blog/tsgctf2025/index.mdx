@@ -894,7 +894,7 @@ now we have the addresses of the two variables ```msg``` and ```values```. we se
 
 because ```values``` is ```int values[SIZE]```, so the write target becomes ```write_addr=&values[0]+4⋅idx```. now we just resolve at what index to point what, bear with my drawings
 
-![variable(assets/draw.png)
+![variable](assets/draw.png)
 
 therefore, the final plan is :
 1. write command string "sh\0" to ```values[0]``` at 0x4040c0 as little endian 32 bit int ```0x00006873``` = ```26739```, overwrite ```msg``` pointer to point to ```0x4040c0```, writing ```4211904``` at index -22 (see above), hijack ```puts@GOT``` to point to ```system@plt``` at index -40, exit loop with index -1 to pop shell 
@@ -929,6 +929,7 @@ p.interactive()
 ```
 
 ![variabe](assets/yield.png)
+
 
 
 
