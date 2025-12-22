@@ -563,3 +563,271 @@ system((char*)stdout)
 ```
 
 and since ```stdout``` begins with ```"sh\0"```, we get a shell
+
+
+## rev - medicine (96 solves)
+
+```shell
+┌──(tlsbollei㉿tlsbollei)-[/mnt/c/Users/tlsbo/Downloads/medicine/medicine]
+└─$ file medicine
+medicine: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, BuildID[sha1]=c540100314c537435ffa30d942a013f0f3bbde6a, for GNU/Linux 4.4.0, stripped
+
+┌──(tlsbollei㉿tlsbollei)-[/mnt/c/Users/tlsbo/Downloads/medicine/medicine]
+└─$ ./medicine
+flag? flag{bbb}
+Wrong ;(
+```
+
+input gate : 
+
+```c
+void __fastcall __noreturn main(int a1, char **a2, char **a3)
+{
+  char v3[40]; // [rsp+0h] [rbp-38h] BYREF
+  unsigned __int64 v4; // [rsp+28h] [rbp-10h]
+
+  v4 = __readfsqword(0x28u);
+  printf("flag? ");
+  if ( (unsigned int)__isoc23_scanf("%32s", v3) == 1 && strlen(v3) == 32 )
+    BUG();
+  sub_1200();
+}
+```
+
+```__isoc23_scanf("%32s", v3)``` and ```strlen(v3) == 32``` which then branches into ```BUG()``` which is our protected/decrypted path. Failure path is ```sub_1200()```, which looks as follows
+
+```c
+void __noreturn sub_1200()
+{
+  _QWORD buf[3]; // [rsp+Eh] [rbp-1Ah] BYREF
+
+  *(_QWORD *)((char *)&buf[1] + 2) = __readfsqword(0x28u);
+  strcpy((char *)buf, "Wrong ;(\n");
+  write(1, buf, 9u);
+  _exit(1);
+}
+```
+
+this fixed string and the function fixed address (.text+0x1200) are crucial for the offline recovery.
+
+### initialization of SIGILL handler
+
+```c
+unsigned __int64 sub_132F()
+{
+  __int64 v0; // rax
+  struct sigaction v2; // [rsp+0h] [rbp-A8h] BYREF
+  unsigned __int64 v3; // [rsp+98h] [rbp-10h]
+
+  v3 = __readfsqword(0x28u);
+  setvbuf(stdin, 0, 2, 0);
+  setvbuf(stdout, 0, 2, 0);
+  setvbuf(stderr, 0, 2, 0);
+  memset(&v2.sa_mask, 0, 0x90u);
+  v2.sa_handler = (__sighandler_t)sub_12A4;
+  v2.sa_flags = 4;
+  sigemptyset(&v2.sa_mask);
+  if ( sigaction(4, &v2, 0) )
+    __assert_fail("sigaction(SIGILL, &action, NULL) == 0", "chal.c", 0x43u, "init");
+  v0 = sysconf(30);
+  if ( mprotect(
+         (void *)((unsigned __int64)&loc_1500 & -v0),
+         (-v0 & ((unsigned __int64)&loc_1500 + v0 + 1663)) - ((unsigned __int64)&loc_1500 & -v0),
+         7) )
+  {
+    __assert_fail(
+      "mprotect((void*)start, end - start, PROT_READ | PROT_WRITE | PROT_EXEC) == 0",
+      "chal.c",
+      0x49u,
+      "init");
+  }
+  return v3 - __readfsqword(0x28u);
+}
+```
+
+SIGILL handler is installed via ```v2.sa_handler = (__sighandler_t)sub_12A4;``` and ```sigaction(4, &v2, 0))```, and the code page containing ```loc_1500``` is made RWX with ```mprotect``` with flag 7, with the protected tail size being bounded explicitly by 1663. This is our self modifying region.
+
+### ROT13 routine
+
+in ```sub_126A``` we cab see the raw decomp of the rot13 routine:
+
+```c
+__int64 __fastcall sub_126A(_BYTE *a1)
+{
+  __int64 result; // rax
+
+  for ( result = (unsigned __int8)*a1; (_BYTE)result; result = (unsigned __int8)*a1 )
+  {
+    if ( (unsigned __int8)((result & 0xDF) - 65) <= 0x19u )
+    {
+      if ( (unsigned __int8)(result - 78) <= 0xCu || (char)result > 109 )
+        *a1 = result - 13;
+      else
+        *a1 = result + 13;
+    }
+    ++a1;
+  }
+  return result;
+}
+```
+
+important is the alpha range check ```((result & 0xDF) - 65) <= 0x19u``` and the ```*a1 = result - 13; else; *a1 = result + 13;``` transform on the ```a1``` pointer
+
+### SIGILL handler and decrypting per fault
+
+```c
+__int16 __fastcall sub_12A4(__int64 a1, __int64 a2, _QWORD *a3)
+{
+  _WORD *v3; // rbx
+  char *v5; // r12
+  _WORD *v6; // rdx
+  char *v7; // rcx
+  __int16 result; // ax
+
+  v3 = (_WORD *)a3[21];
+  if ( ((unsigned __int8)v3 & 0x3F) != 0 || (_WORD *)qword_40B0 == v3 )
+    sub_1200();
+  v5 = (char *)a3[20];
+  qword_40B0 = a3[21];
+  sub_126A(v5);
+  v6 = v3;
+  v7 = v5;
+  do
+  {
+    result = 3525 * *v7 + 15842;
+    *v6++ ^= result;
+    ++v7;
+  }
+  while ( v7 != v5 + 32 );
+  ++a3[19];
+  return result;
+}
+```
+this confirms a variety of my troubles == ```((unsigned __int8)v3 & 0x3F) != 0``` enforces 64 byte alignment, ```qword_40B0 == v3``` prevents repeating the same block, ```sub_126A(v5);``` runs on every SIGILL to ROT13 toggles each time, and the loop runs 32 iterations, with each iteration XORing one ```_WORD``` == ```32 x 2 bytes == 64 bytes decrypted```
+the mask function is ```mask16 = (3525 * keyByte + 15842) mod 2^16```
+
+### TL;DR in case of confusion
+
+this binary implements a "decrypt-on-fault" scheme that uses CPU faults to progressively decrypt its own code. the program reads exactly 32 bytes from the user (the "flag"). If it's not exactly 32 bytes, it exits immediately with "Wrong ;(\n". during initialization, the binary installs a custom signal handler for SIGILL (Signal 4, illegal instruction). it also makes a region of code RWX using ```mprotect```. a 1663-byte encrypted tail sits in the ```.text``` section starting at address ```loc_1500```, filled with invalid instructions ```(UD2 = 0F 0B)```. as the program continues runtime execution, it executes an invalid instruction ```(SIGILL)``` which forces the signal handler dispatcher to decrypt exactly 64 bytes of ciphertext code in place using the user key, which is our 32 byte flag input, and execution resumes from our newly decrypted code. given we provide the binary with the correct flag, this process is repeated until we successfuly decrypt all of the invalid instructions into valid ones, and we reach the point in the binary where our flag is confirmed to be correct.
+
+### offline recovery and how to solve?
+
+```call sub_1200``` becomes a perfect proxy for us, and that is because a ```call rel32``` instruction is encoded as ```E8 plus 4 byte little endian displacement```, where ```displacement = target - (callsite + 5)```. in our binary, ```sub_1200``` is at ```.text+0x1200```. therefore, for any candidate callsite address ```p```, the plaintext bytes are fully determined. this is because encryption is XOR on 16 bit words :
+
+```cipherWord = plainWord XOR mask16``` ==> ```mask16 = cipherWord XOR plainWord```
+
+and ```mask16``` must equal ```(3525*keyByte + 15842) & 0xFFF``` for some byte.
+
+### inverting mask16 to keyByte
+
+we precompute a reverse table for all 256 bytes:
+
+```python
+mask16(b) = (3525*b + 15842) & 0xFFFF
+rev[mask16(b)] = b
+```
+
+from the handler,
+
+```c
+sub_126A(v5);
+```
+
+since ROT13 is an involution (a function, transformation, or operator that is equal to its inverse, i.e. which gives the identity when applied to itself.), the key alternates per decrypted block:
+
+block0 uses ```rot13(flag)```
+block1 uses ```flag```
+block2 uses ```rot13(flag)```
+
+therefore, once we recover the used byte for an even block, we ROT13 it back to get the real flag byte
+
+### dumping the encrypted tail
+
+because of ```LOAD``` mapping, (Offset=VirtAddr for ```.text``` segment), the encrypted page starts at ```loc_1500```, which is file offset 0x1500. The RWX page is ```0x100..0x1FFF```, and the protected tail spans roughly ```0x1500..0x1500+1663```.
+
+```shell
+dd if=./medicine of=tailpage.bin bs=1 skip=$((0x1500)) count=$((0x2000-0x1500)) status=none
+```
+
+and here we have our solve
+
+```python
+#!/usr/bin/env python3
+from pathlib import Path
+from collections import Counter
+
+A = 3525
+B = 15842
+
+data = Path("medicine").read_bytes()
+
+mask_to_key = {}
+for key_byte in range(256):
+    mask = (A * key_byte + B) & 0xFFFF
+    mask_to_key[mask] = key_byte
+
+def rot13(ch):
+    if 65 <= ch <= 90:
+        ch = ((ch - 65 + 13) % 26) + 65
+    elif 97 <= ch <= 122:
+        ch = ((ch - 97 + 13) % 26) + 97
+    return ch
+
+votes = [Counter() for _ in range(32)]
+
+for callsite in range(0x1500, 0x2000 - 5):
+    disp = (0x1200 - (callsite + 5)) & 0xFFFFFFFF
+    call_plain = bytes([0xE8]) + disp.to_bytes(4, 'little')
+    
+    block_base = callsite & ~0x3F
+    block_idx = (block_base - 0x1500) // 64
+    is_even_block = (block_idx % 2 == 0)
+    
+    recovered = {}
+    for word_idx in range(32):
+        word_addr = block_base + 2 * word_idx
+        
+        if word_addr >= callsite and word_addr + 1 < callsite + 5:
+            offset_in_call = word_addr - callsite
+            
+            b0 = call_plain[offset_in_call]
+            b1 = call_plain[offset_in_call + 1]
+            plain_word = b0 | (b1 << 8)
+            
+            cipher_word = int.from_bytes(data[word_addr:word_addr+2], 'little')
+            
+            mask = cipher_word ^ plain_word
+            
+            if mask in mask_to_key:
+                key_byte = mask_to_key[mask]
+                
+                if is_even_block:
+                    flag_byte = rot13(key_byte)
+                else:
+                    flag_byte = key_byte
+                
+                if 32 <= flag_byte <= 126:
+                    recovered[word_idx] = flag_byte
+    
+    if recovered:
+        for idx, val in recovered.items():
+            votes[idx][val] += len(recovered)
+
+result = bytearray(32)
+result[0:5] = b"TSGCT"  
+
+for i in range(5, 32):
+    if votes[i]:
+        result[i] = votes[i].most_common(1)[0][0]
+    else:
+        result[i] = ord('?')
+
+print(result.decode())
+```
+
+```TSGCTF{51gn4l_h4ndl3r_r0t13_x0r}```
+
+
+
+## rev - medicine
+## rev - medicine
