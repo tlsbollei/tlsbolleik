@@ -885,7 +885,7 @@ void edit(void)
 
 there is no bounds check on ```idx``` in ```values[idx]``` write. only checks for ```idx == -1``` to exit loop, which becomes our exploit trigger. from this, we can have an arbitrary write relative to values base, and given index can be negative or large, allowing for writes before and after the values array.
 
-![variables(assets/ab.png)
+![variables](assets/ab.png)
 
 now we have the addresses of the two variables ```msg``` and ```values```. we see the program calling ```puts(msg);```, and as we have a constraint write-what-where primitive we can overwrite the GOT entry of ```puts@GOT``` to point to the stub ```system@plt```, and we can also overwrite the ```msg``` variable, turning ```puts(msg)``` into ```system("sh")```.
 
@@ -927,7 +927,8 @@ p.sendlineafter(b'> ', b'-1')
 p.interactive()
 ```
 
-![variabe(assets/yield.png)
+![variabe](assets/yield.png)
+
 
 
 
