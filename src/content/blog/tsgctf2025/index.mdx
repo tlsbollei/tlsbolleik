@@ -883,6 +883,7 @@ void edit(void)
 }
 ```
 
+### bug and solve
 there is no bounds check on ```idx``` in ```values[idx]``` write. only checks for ```idx == -1``` to exit loop, which becomes our exploit trigger. from this, we can have an arbitrary write relative to values base, and given index can be negative or large, allowing for writes before and after the values array.
 
 ![variables](assets/ab.png)
@@ -928,6 +929,7 @@ p.interactive()
 ```
 
 ![variabe](assets/yield.png)
+
 
 
 
