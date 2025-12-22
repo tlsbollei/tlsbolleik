@@ -930,8 +930,459 @@ p.interactive()
 
 ![variabe](assets/yield.png)
 
+## rev - shadow_spider_network (78 solves)
 
+### entry point and red herring
 
+```c
+void __fastcall __noreturn main(int a1, char **a2, char **a3)
+{
+  printf("FLAG> ");
+  if ( (unsigned int)sub_404450() )
+    puts("Wrong");
+  else
+    puts("Correct!");
+  exit(0);
+}
+```
 
+the function ```sub_40419F()``` implements RC4 KSA+PRGA using a global key string s
 
+```c
+__int64 __fastcall sub_40419F(const char *a1)
+{
+  char v2; // [rsp+11h] [rbp-12Fh]
+  char v3; // [rsp+13h] [rbp-12Dh]
+  int i; // [rsp+14h] [rbp-12Ch]
+  int j; // [rsp+14h] [rbp-12Ch]
+  int v6; // [rsp+18h] [rbp-128h]
+  int v7; // [rsp+1Ch] [rbp-124h]
+  int v8; // [rsp+20h] [rbp-120h]
+  int k; // [rsp+24h] [rbp-11Ch]
+  size_t v10; // [rsp+28h] [rbp-118h]
+  _BYTE v11[264]; // [rsp+30h] [rbp-110h]
+  unsigned __int64 v12; // [rsp+138h] [rbp-8h]
 
+  v12 = __readfsqword(0x28u);
+  v10 = strlen(s);
+  sub_404172();
+  for ( i = 0; i <= 255; ++i )
+    v11[i] = i;
+  LOBYTE(v6) = 0;
+  for ( j = 0; j <= 255; ++j )
+  {
+    v6 = (unsigned __int8)(v11[j] + v6 + s[j % v10]);
+    v3 = v11[j];
+    v11[j] = v11[v6];
+    v11[v6] = v3;
+  }
+  if ( strlen(a1) != 40 )
+    return 1;
+  LOBYTE(v8) = 0;
+  LOBYTE(v7) = 0;
+  for ( k = 0; k <= 47; ++k )
+  {
+    v7 = (unsigned __int8)(v7 + 1);
+    v8 = (unsigned __int8)(v11[v7] + v8);
+    v2 = v11[v7];
+    v11[v7] = v11[v8];
+    v11[v8] = v2;
+    if ( (v11[(unsigned __int8)(v11[v7] + v11[v8])] ^ a1[k]) != byte_4050A0[k] )
+      return 1;
+  }
+  return 0;
+}
+```
+
+it then compares 48 bytes against ```byte_4050A0```. however, it also enforces ```strlen(a1)==40```, which is incompatible with the real 82 byte flag
+
+```c title=herring.c
+_BYTE byte_4050A0[48] =
+{
+  -63,
+  120,
+  -93,
+  27,
+  -32,
+  52,
+  -120,
+  10,
+  14,
+  119,
+  -17,
+  -19,
+  128,
+  -63,
+  -65,
+  -22,
+  107,
+  -71,
+  -53,
+  -108,
+  53,
+  89,
+  -20,
+  -50,
+  93,
+  -35,
+  102,
+  82,
+  30,
+  3,
+  85,
+  -91,
+  128,
+  -101,
+  -100,
+  -69,
+  -93,
+  -57,
+  102,
+  -81,
+  72,
+  -59,
+  89,
+  115,
+  62,
+  -43,
+  -49,
+  -33
+}; // weak
+char *s = "the_flying_cabbage_eats_purple_clocks"; // idb
+```
+
+this strongly suggests that RC4 is not the correct verification path
+
+### the real bug 
+
+the input is read with ```%s``` into a 56 byte stack buffer, which is a classic overflow. the function also has as canary which reads ```fs:0x28```.
+
+```c
+__int64 sub_404450()
+{
+  char v1[56]; // [rsp+0h] [rbp-40h] BYREF
+  unsigned __int64 v2; // [rsp+38h] [rbp-8h]
+
+  v2 = __readfsqword(0x28u);
+  __isoc99_scanf("%s", v1);
+  return sub_40419F(v1);
+}
+```
+
+this is the BOP entry, you feed an 82 byte string (the real flag) smashing past 56 bytes.
+
+### tracerpid check
+
+before our fake RC4 works begins, ```sub_404172()``` calls ```sub_40408F()``` which reads ```/proc/self/status``` and parses ```TracerPid```.
+
+```c
+_BOOL8 sub_40408F()
+{
+  ...
+  stream = fopen("/proc/self/status", "r");
+  v2 = 0;
+  for ( i = fgets(s1, 256, stream); i; i = fgets(s1, 256, stream) )
+  {
+    if ( !strncmp(s1, "TracerPid:", 0xAu) )
+    {
+      v2 = atoi(v5);
+      break;
+    }
+  }
+  sub_403ED5();
+  fclose(stream);
+  return v2 != 0;
+}
+```
+
+... called by...
+
+```c
+_BOOL8 sub_404172()
+{
+  _BOOL8 result; // rax
+
+  result = sub_40408F();
+  if ( result )
+  {
+    sub_403ED5();
+    exit(1);
+  }
+  return result;
+}
+```
+
+which is a cool anti-debugging check which forces ut to solve this offline statically. big problem returning back to our stack canary - how can we do anything if main is gated through an overflow and a canary is in place?
+
+### alternate stack and handler for SIGILL and SIGSEGV
+
+the program sets up an alternate signal stack and isntall the same handler for SIGSEV (11) and SIGILL (4)
+
+```c
+unsigned __int64 sub_403F4F()
+{
+  size_t v0; // rax
+  struct sigaltstack s; // [rsp+0h] [rbp-C0h] BYREF
+  struct sigaction act; // [rsp+20h] [rbp-A0h] BYREF
+  unsigned __int64 v4; // [rsp+B8h] [rbp-8h]
+
+  v4 = __readfsqword(0x28u);
+  memset(&s, 0, sizeof(s));
+  v0 = sysconf(250);
+  s.ss_sp = malloc(v0);
+  s.ss_size = sysconf(250);
+  s.ss_flags = 0;
+  if ( sigaltstack(&s, 0) == -1 )
+    exit(1);
+  sub_403ED5();
+  memset(&act, 0, sizeof(act));
+  act.sa_handler = (__sighandler_t)sub_401363;
+  sigemptyset(&act.sa_mask);
+  act.sa_flags = 134217732;
+  if ( sigaction(11, &act, 0) == -1 )
+    exit(1);
+  if ( sigaction(4, &act, 0) == -1 )
+    exit(1);
+  return v4 - __readfsqword(0x28u);
+}
+```
+
+### GOT, plt patching, state counter, and why overflow leads into the handler machine
+
+two GOT-like pointers are explicitly present as globals
+
+```c
+_UNKNOWN *off_407040 = &_stack_chk_fail; // weak
+_UNKNOWN *off_407088 = &_isoc99_scanf; // weak
+char byte_4070B8; // weak
+int dword_4070BC; // weak
+```
+
+the helper ```sub_403ED5(```) mutates ```off_407040``` depending on a counter ```dword_4070BC```, then increments it
+
+```c
+__int64 sub_403ED5()
+{
+  if ( dword_4070BC == 1 )
+  {
+    off_407040 = &loc_401016;
+  }
+  else if ( dword_4070BC == 2 )
+  {
+    off_407040 = sub_401080;
+  }
+  else if ( dword_4070BC )
+  {
+    off_407040 = (_UNKNOWN *)(dword_4070BC + 307656848LL);
+  }
+  else
+  {
+    off_407040 = sub_401080;
+  }
+  return (unsigned int)++dword_4070BC;
+}
+```
+
+this is what makes stack smashing / faulting keep stepping through custom control flow instead of immediately terminating normally. when the function returns, it calls ```__stack_chk_fail()```, but the program has patched ```off_407040``` (the GOT pointer to ```__stack_chk_fail```), instead of crashing, it jumps to a custom handler, ```sub_401363()```, which is a byte-check state machine, and looks as follows:
+
+```c
+_QWORD *__fastcall sub_401363(__int64 a1, __int64 a2, _QWORD *a3)
+{
+  __int64 v3; // rax
+  _QWORD *result; // rax
+  ...
+  v3 = a3[21];
+  if ( v3 == 0x8020392031LL )
+  {
+    if ( *(_BYTE *)(a3[15] - 27LL) == 100 )
+    {
+      off_407040 = (_UNKNOWN *)218209785;
+      v45 = a3[20];
+      if ( (v45 & 0xF) == 8 )
+        v45 -= 8;
+      a3[20] = v45;
+      a3[21] = &loc_404486;
+      return a3;
+    }
+    else
+    {
+      a3[21] = sub_401080;
+      return a3;
+    }
+  }
+and more lines like these
+}
+```
+
+the signal handler uses the saved context array ```a3[]```. two indices are key :
+1. ```vc3 = a3[21];``` is treated as the current state (RIP or dispatch tag)
+2. memory around ```a3[15]``` is dereferenced and compared to constants (the flag bytes)
+
+this is the entire core mechanism :
+
+```
+byte check: *(_BYTE *)(a3[15] - 27LL) == 100
+on success: change RIP: a3[21] = &loc_404486;
+on failure: crash: a3[21] = sub_401080;
+```
+
+the handler contains checks with offsets ranging from ```-64``` up to ```+17```, which is 82 total!
+
+tail logic looks as follows:
+
+```c
+if ( (_UNKNOWN *)v3 != &locret_40101A )
+  goto LABEL_482;
+if ( *(_WORD *)(a3[15] + 17LL) == 125 )
+{
+  a3[20] -= 8LL;
+  off_407040 = (_UNKNOWN *)3735928559LL;
+  ++dword_4070BC;
+  a3[21] = 0x1890909090LL;
+}
+else
+{
+  a3[21] = sub_401080;
+}
+return a3;
+```
+
+and the start, prefix is also present as explicit byte checks:
+
+```c
+case 307656869LL:
+  if ( *(_BYTE *)(a3[15] - 64LL) == 84 )
+  {
+    off_407088 = (_UNKNOWN *)39883721;
+    a3[21] = &loc_404472;
+  }
+  else
+  {
+    a3[21] = sub_401080;
+  }
+  result = a3;
+  break;
+c
+Copy code
+if ( v3 == 165945142 )
+{
+  if ( *(_BYTE *)(a3[15] - 63LL) == 83 )
+  {
+    off_407040 = (_UNKNOWN *)41962613;
+    v9 = a3[20];
+    if ( (v9 & 0xF) == 8 )
+      v9 -= 8;
+    a3[20] = v9;
+    a3[21] = &loc_4044A1;
+    return a3;
+  }
+  else
+  {
+    a3[21] = sub_401080;
+    return a3;
+  }
+}
+c
+Copy code
+if ( v3 == 4211843 )
+{
+  if ( *(_BYTE *)(a3[15] - 62LL) == 71 )
+  {
+    off_407088 = (_UNKNOWN *)33986443;
+    a3[21] = &loc_404472;
+  }
+  else
+  {
+    a3[21] = sub_401080;
+  }
+  return a3;
+}
+c
+Copy code
+case 307656851LL:
+  if ( *(_BYTE *)(a3[15] - 61LL) == 67 )
+  {
+    off_407040 = (_UNKNOWN *)7467883;
+    v12 = a3[20];
+    if ( (v12 & 0xF) == 8 )
+      v12 -= 8;
+    a3[20] = v12;
+    a3[21] = &loc_404486;
+    result = a3;
+  }
+  else
+  {
+    a3[21] = sub_401080;
+    result = a3;
+  }
+  break;
+c
+Copy code
+case 307656859LL:
+  if ( *(_BYTE *)(a3[15] - 60LL) == 84 )
+  {
+    off_407088 = (_UNKNOWN *)232629856;
+    a3[21] = &loc_404472;
+  }
+  else
+  {
+    a3[21] = sub_401080;
+  }
+  result = a3;
+  break;
+c
+Copy code
+if ( v3 == 263109988 )
+{
+  if ( *(_BYTE *)(a3[15] - 59LL) == 70 )
+  {
+    off_407088 = (_UNKNOWN *)206069891;
+    a3[21] = &loc_404472;
+  }
+  else
+  {
+    a3[21] = sub_401080;
+  }
+  return a3;
+}
+c
+Copy code
+case 307656874LL:
+  if ( *(_BYTE *)(a3[15] - 58LL) == 123 )
+  {
+    off_407088 = (_UNKNOWN *)34022747;
+    a3[21] = &loc_404472;
+  }
+  else
+  {
+    a3[21] = sub_401080;
+  }
+  result = a3;
+  break;
+```
+
+from these values you can directly see the values spelling out ```TSGCTF{``` (84,83,71,67,84,70,123)
+
+### reconstruction of the flag
+
+the handler reads ```*(a3[15] ± offset)```. the checks span ```-64to +17```. this is consistent with:
+
+```a3[15]  points at "base" = input + 64```
+
+therefore:
+
+```c
+*(a3[15] - 64) → input[0]
+
+*(a3[15] - 63) → input[1]
+
+*(a3[15] + 17) → input[81]
+```
+
+so the index is:
+
+```if expression is a3[15] - N → idx = 64 - N```
+
+```if expression is a3[15] + N → idx = 64 + N```
+
+reconstructing all gives us the flag, ```TSGCTF{Inv3571ga710n_1n70_BOF_Or13n73d_Pr0gramm1ng_a5_a_73chn1qu3_f0r_0bfu5ca710n}```
