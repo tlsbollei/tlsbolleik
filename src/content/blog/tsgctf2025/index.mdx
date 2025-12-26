@@ -927,14 +927,9 @@ for the exploit to work, we need
 
 ```c
 dangling_xml_decl_loc == tcache_struct_address
-```
 
-More specifically, we need the last 12 bits of both addresses to match, because:
+More specifically, we need the last 12 bits of both addresses to match, because tcache_perthread_struct lives at: 
 
-```
-tcache_perthread_struct lives at: 
-
-```
 heap_base + small_offset
 └───┬───┘   └────┬────┘
  unknown    controllable
@@ -945,19 +940,15 @@ heap_base + small_offset
 the ```small_offset``` part (last 12 bits) we can influence through allocation order/sizes, which as we have clarified, we control.
 
         
-### Memory Alignment Constraints
+### memory alignment constraints
 
-Heap memory is allocated in pages (4KB = 0x1000 bytes).
+heap memory is allocated in pages (4KB = 0x1000 bytes).
 
 ```
 addresses end in: ...000, ...1000, ...2000, ...3000, and more
                    └─┬─┘
                     These 12 bits (0x000 to 0xFFF) define position within a 4KB window
-```
 
-and malloc chunks:
-
-```
 malloc chunks are 16-byte aligned
 Addresses end in: ...00, ...10, ...20, ...30, ...40, and more
                       └┬┘
@@ -1684,6 +1675,7 @@ if expression is a3[15] - N → idx = 64 - N
 if expression is a3[15] + N → idx = 64 + N
 ```
 reconstructing all gives us the flag, ```TSGCTF{Inv3571ga710n_1n70_BOF_Or13n73d_Pr0gramm1ng_a5_a_73chn1qu3_f0r_0bfu5ca710n}```
+
 
 
 
