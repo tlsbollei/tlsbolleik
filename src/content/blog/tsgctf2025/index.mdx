@@ -879,15 +879,15 @@ if (node.name == "root") originals.push_back(node);
 
 therefore by nesting/creating enough ```<root>xyz</root>``` tags, you force originals to exceed capacity 10 ==> vector reallocates ==> the old buffer is freed ==> all references into it (including ```xml_decl_loc```) become dangling.
 
-then the next <?xml ...?> executes ```delete xml_decl_loc``` on a stale pointer into freed memory, which is our exploit entry.
+then the next ```<?xml ...?>``` executes ```delete xml_decl_loc``` on a stale pointer into freed memory, which is our exploit entry.
 
-### what primitive is this?
+### what primitive is this
 
 definitely not a ```free(anything)``` primitive, but it is still a strong one in our case, as we can make ```delete(xml_decl_loc```) call ```free()``` on an address that used to be inside a freed vector buffer. with heap feng shui (grooming), we can make that stale pointer line up with a real malloc chunk user pointer we care about. therefore, the intended target is  ```tcache_perthread_struct```
 
 ### free tcache_perthread_struct
 
-what is ```tcache_perthread_struct```?
+what is ```tcache_perthread_struct```
 
 in glibc 2.3x, simplified :
 
@@ -906,7 +906,7 @@ assert(len(payload_rop) == 640)
 
 so our exploit plan is to use the UAF ```delete(xml_decl_loc)``` to free the live tcache struct chunk, immediately allocate exactly the same size to reclaim it and overwrite ```counts[]``` and ```entries[]```, so now we control the allocators per-thread cache.
 
-### big problem - no leak?
+### big problem - no leak
 
 we do not have a heap leak, which is a problem. we need to get the stale pointer used by ```delete(xml_decl_loc)``` to land exactly on the tcache struct chunk, which is ASLR/alignment lottery. because modern libc does safe-linking as follows,
 
@@ -1023,7 +1023,7 @@ fake_chunks2 = flat({
 })
 ```
 
-what does this mean?? for tcache singly-linked lists, the next pointer stored in a freed chunk is mangled:
+for tcache singly-linked lists, the next pointer stored in a freed chunk is mangled:
 
 ```
 stored=next⊕(chunk_addr≫12)
@@ -1051,7 +1051,7 @@ mangle = 0x5f6
 fd = target ^ mangle
 ```
 
-### how does "controlled allocation to GOT" work?
+### how does "controlled allocation to GOT" work
 
 after we corrupt tcache, the flow looks as follows:
 
@@ -1071,7 +1071,7 @@ this is the controlled allocation to GOT stage.
 
 ## GOT overwrite ==> ret n pivot
 
-### why does GOT work in this static binary?
+### why does GOT work in this static binary
 
 in static builds we still have a ```.got.plt``` populated by startup relocations (like ```IRELATIVE/IFUNC``` entries for optimized routines like ```memchr```, ```strcmp```, and more).
 
@@ -1684,6 +1684,7 @@ if expression is a3[15] - N → idx = 64 - N
 if expression is a3[15] + N → idx = 64 + N
 ```
 reconstructing all gives us the flag, ```TSGCTF{Inv3571ga710n_1n70_BOF_Or13n73d_Pr0gramm1ng_a5_a_73chn1qu3_f0r_0bfu5ca710n}```
+
 
 
 
