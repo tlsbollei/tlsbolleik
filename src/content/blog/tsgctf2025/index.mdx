@@ -827,6 +827,308 @@ print(result.decode())
 ```
 
 ```TSGCTF{51gn4l_h4ndl3r_r0t13_x0r}```
+## pwn - XMLTreeDump
+
+```shell
+tlsbollei@tlsbollei mnt/.../XMLTreeDump pwn checksec XMLTreeDump
+[*] '/mnt/c/Users/tlsbo/Downloads/XMLTreeDump/XMLTreeDump/XMLTreeDump'
+    Arch:       amd64-64-little
+    RELRO:      Partial RELRO
+    Stack:      Canary found
+    NX:         NX enabled
+    PIE:        No PIE (0x400000)
+    SHSTK:      Enabled
+    IBT:        Enabled
+    Stripped:   No
+    Debuginfo:  Yes
+tlsbollei@tlsbollei mnt/.../XMLTreeDump
+```
+
+### root bug, xml_decl_loc becomes a dangling pointer, then delete() frees garbage
+
+in ```XmlParser::parse_xml_decl()```, the program creates a local ```XmlDecl xml_decl;``` and pushes it into:
+
+```c
+std::vector<std::variant<XmlNode, XmlDecl>> originals;
+originals.push_back(std::move(xml_decl));
+return std::get<XmlDecl>(originals.back());
+```
+
+so it returns a reference to the ```XmlDecl``` object stored inside originals. in ```XmlParser::parse_element()``` when encountering ```<?xml?>``` shows the exact same dangerous sequence : if we see ```<?xml:```, if ```this->xml_decl_loc``` exists, they destroy+free it ```operator delete(x, 0x40)```, then set it to ```&parse_xml_decl()```
+
+therefore,
+
+```c
+if (this->xml_decl_loc) delete this->xml_decl_loc;   // <-- delete pointer into originals storage
+this->xml_decl_loc = &parse_xml_decl();              // <-- pointer into originals buffer
+```
+
+### why the pointer becomes dangling
+
+in the constructor:
+
+```c
+originals.reserve(10);
+```
+
+also in ```parse_element()```
+
+```c
+if (node.name == "root") originals.push_back(node);
+```
+
+therefore by nesting/creating enough ```<root>xyz</root>``` tags, you force originals to exceed capacity 10 ==> vector reallocates ==> the old buffer is freed ==> all references into it (including ```xml_decl_loc```) become dangling.
+
+then the next <?xml ...?> executes ```delete xml_decl_loc``` on a stale pointer into freed memory, which is our exploit entry.
+
+### what primitive is this?
+
+definitely not a ```free(anything)``` primitive, but it is still a strong one in our case, as we can make ```delete(xml_decl_loc```) call ```free()``` on an address that used to be inside a freed vector buffer. with heap feng shui (grooming), we can make that stale pointer line up with a real malloc chunk user pointer we care about. therefore, the intended target is  ```tcache_perthread_struct```
+
+### free tcache_perthread_struct
+
+what is ```tcache_perthread_struct```?
+
+in glibc 2.3x, simplified :
+
+```c
+struct tcache_perthread_struct {
+  uint16_t counts[TCACHE_MAX_BINS];   // 64 * 2 = 0x80
+  void*    entries[TCACHE_MAX_BINS];  // 64 * 8 = 0x200
+};                                     // total = 0x280 (640)
+```
+
+the total number ```0x280``` is our gate in, we can build a blob and assert :
+
+```c
+assert(len(payload_rop) == 640)
+```
+
+so our exploit plan is to use the UAF ```delete(xml_decl_loc)``` to free the live tcache struct chunk, immediately allocate exactly the same size to reclaim it and overwrite ```counts[]``` and ```entries[]```, so now we control the allocators per-thread cache.
+
+### big problem - no leak?
+
+we do not have a heap leak, which is a problem. we need to get the stale pointer used by ```delete(xml_decl_loc)``` to land exactly on the tcache struct chunk, which is ASLR/alignment lottery. because modern libc does safe-linking as follows,
+
+```c
+stored_pointer = actual_pointer ^ (chunk_address >> 12)
+```
+
+which removes the last 12 bits, keeps only the identity bits of the heap base, these shifted bits act as an obsfuscation key. 
+
+### the 12-bit lottery
+
+we control the relative positions of the allocations within the heap, the timing of whe they get allocated/freed, and the sizes of our allocations. we do not know the **absolute heap base**. you may ask - PIE is off according to checksec, why are we bruteforcing anything? this is because the brute force isn't about finding addresses - it's about making a heap collision happen.
+
+
+### the collision requirement
+
+for the exploit to work, we need 
+
+```c
+dangling_xml_decl_loc == tcache_struct_address
+```
+
+More specifically, we need the last 12 bits of both addresses to match, because:
+
+```
+tcache_perthread_struct lives at: 
+
+```
+heap_base + small_offset
+└───┬───┘   └────┬────┘
+ unknown    controllable
+ (ASLR)     (feng shui)
+```
+
+
+the ```small_offset``` part (last 12 bits) we can influence through allocation order/sizes, which as we have clarified, we control.
+
+        
+### Memory Alignment Constraints
+
+Heap memory is allocated in pages (4KB = 0x1000 bytes).
+
+```
+addresses end in: ...000, ...1000, ...2000, ...3000, and more
+                   └─┬─┘
+                    These 12 bits (0x000 to 0xFFF) define position within a 4KB window
+```
+
+and malloc chunks:
+
+```
+malloc chunks are 16-byte aligned
+Addresses end in: ...00, ...10, ...20, ...30, ...40, and more
+                      └┬┘
+                      last 4 bits are also constrained
+```
+
+when we do not know the heap base:
+
+```
+Heap could be at: 0x5555_0000_0000
+              or: 0x5555_0000_1000
+              or: 0x5555_0000_2000
+              or: 0x5555_0000_3000
+              or: 0x5555_0FFF_F000 
+```
+
+but within each 4kb page, the relative layout is the same.
+
+if our heap feng shui makes:
+- ```dangling_xml_decl_loc``` end with ```..5d0``` 
+- ```tcache_struct``` should be at ```heap_base + 0x2d0```
+
+then we need: ```heap_base & 0xFFF == 0x300```
+- the last 12 bits of heap_base must be ```0x300```
+- there are 2^12 = 4096 possible values for these 12 bits
+- So 1/4096 chance of success per attempt
+
+and that is exactly what we do, just spam the shit ouf the service 	☜(⌒▽⌒)☞
+
+```python title=blaster.py
+while True:
+  try:
+    io = remote(...)
+    io.send(payload)
+    io.recvuntil("flag", timeout=0.1)
+    break
+  except:
+    count += 1
+```
+
+when we win the lottery, ```delete(xml_decl_loc)``` frees the real tcache struct chunk.
+
+## reclaim the freed tcache struct and overwrite it (controlled tcache)
+
+this is where we use a payload rop. the first 0x80 bytes should be ```counts[]``` (uint16), because setting many counts to 1 means "pretend these bins are non empty". the following 0x200 bytes should be ```entries[]```, where we plant pointers for bins we want to ```malloc()``` to ```return```. once we reclaim the freed tcache struct with an allocation of the right size, we overwrite:
+
+```python
+tcache->counts[bin] = 1
+tcache->entries[bin] = <address we want malloc to give us>
+```
+
+now we can make ```malloc(size_class(bin))``` return a pointer anywhere we choose, as long as we satisfy safe-linking expectations for the next pointer when that chunk is popped.
+
+
+## turn controlled tcache into malloc returning .bss and then malloc returning .got.plt
+
+because of safe-linking, we typically make malloc return a writable staging area ```.bss``` where we can build a fake tcache entry, use that staged fake entry so the next allocation returns the real target ```.got.plt```, which we implement as follows:
+
+```python
+mangle = 0x5f6
+fake_chunks2 = flat({
+  0x20: target^mangle
+})
+```
+
+what does this mean?? for tcache singly-linked lists, the next pointer stored in a freed chunk is mangled:
+
+```
+stored=next⊕(chunk_addr≫12)
+```
+
+so if we want the allocator to interpret a fake chunk at address ```CHUNK``` whose next should be ```TARGET```, we write:
+
+```c
+*(uint64_t*)CHUNK = TARGET ^ (CHUNK >> 12);
+```
+
+so in our exploit:
+
+```
+CHUNK is something like 0x5f65d0 (in .bss)
+CHUNK >> 12 = 0x5f6 ==> which is our mangle
+TARGET is .got.plt+offset (like 0x5f3010)
+```
+
+so:
+
+```
+target = 0x5f3010
+mangle = 0x5f6
+fd = target ^ mangle
+```
+
+### how does "controlled allocation to GOT" work?
+
+after we corrupt tcache, the flow looks as follows:
+
+```
+1. Allocate ==> returns CHUNK ==> 0x5f65d0 (a chunk in .bss)
+2. we write the mangled fd at ```CHUNK``` so that the allocator believes:
+    head = CHUNK
+    CHUNK->next decodes to TARGET
+3. next allocation of same bin:
+    pops CHUNK
+    sets head to decoded TARGET
+4. next allocation:
+    returns TARGET (inside .got.plt)
+```
+
+this is the controlled allocation to GOT stage.
+
+## GOT overwrite ==> ret n pivot
+
+### why does GOT work in this static binary?
+
+in static builds we still have a ```.got.plt``` populated by startup relocations (like ```IRELATIVE/IFUNC``` entries for optimized routines like ```memchr```, ```strcmp```, and more).
+
+overwiting one of these slots results in the program later calling ```memchr()```, the call goes through an entry we overwrote, and we redirect execution to a gadget.
+
+
+### why we use "ret n" (stack adjust pivot) 
+
+"ret n" style gadget is a pivot primitive when we can not directly ```mov rsp, reg```, but we can land in a sequence that consumes a controlled return address then skips forward by a constant and returns again.
+
+we use this to land execution onto a ROP chain we placed inside a large controlled buffer, aligned at a known offset. we implement this as follows:
+
+```python
+p += p64(next(elf.gadget("ret;"))) * (0x200//8)
+p += <more> pop rdi; pop rsi; pop rdx; pop rax; syscall <more>
+```
+
+this tail is the "ROP runway" the pivot lands on. 
+
+## idea, summarized
+
+
+use tcache poisoning to write into ```.got.plt``` ==> overwrite an ```IFUNC``` slot that will be called during parsing/dumping (```memchr / strcmp```) ==> point it at a pivot gadget (ret n) ==> pivot causes RSP to land into our controlled buffer region ==> ROP begins
+
+
+## execve ROP / solve
+
+we just do :
+
+```python
+rop.call('execve', [b'/bin/sh', [[b'/bin/sh'], [b'-p'], [b'-c'], [b'cat flag-*'], 0], 0])
+```
+
+## summary
+
+1. ```<?xml ...?>``` stores ```xml_decl_loc = &originals.back()```
+
+2. push >10 ```<root> ==> originals realloc ==> xml_decl_loc``` dangling
+
+3. second ```<?xml ...?> ==> delete(xml_decl_loc)``` frees the wrong address
+
+4. by heap feng shui + rng (1/4096), that wrong free hits ```tcache_perthread_struct```
+
+5. allocate a 0x280-sized chunk ==> reclaim tcache struct ==> overwrite:
+
+6. ```counts[]``` set non-zero
+
+7. ```entries[]``` set to controlled chunk addresses in ```.bss```
+
+8. use ```.bss``` fake chunks with safe-linking to make next allocation return ```.got.plt```
+
+9. overwrite a ```.got.plt IFUNC``` slot ==> redirect a later call into a pivot gadget (ret n)
+
+10. pivot lands on our ROP runway inside controlled memory
+
+11. ROP does execve("/bin/sh") 
+
 
 ## pwn - global writer 
 
@@ -1382,5 +1684,6 @@ if expression is a3[15] - N → idx = 64 - N
 if expression is a3[15] + N → idx = 64 + N
 ```
 reconstructing all gives us the flag, ```TSGCTF{Inv3571ga710n_1n70_BOF_Or13n73d_Pr0gramm1ng_a5_a_73chn1qu3_f0r_0bfu5ca710n}```
+
 
 
