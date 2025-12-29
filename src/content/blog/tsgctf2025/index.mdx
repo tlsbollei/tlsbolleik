@@ -991,7 +991,7 @@ while True:
 
 when we win the lottery, ```delete(xml_decl_loc)``` frees the real tcache struct chunk.
 
-## reclaim the freed tcache struct and overwrite it (controlled tcache)
+### reclaim the freed tcache struct and overwrite it (controlled tcache)
 
 this is where we use a payload rop. the first 0x80 bytes should be ```counts[]``` (uint16), because setting many counts to 1 means "pretend these bins are non empty". the following 0x200 bytes should be ```entries[]```, where we plant pointers for bins we want to ```malloc()``` to ```return```. once we reclaim the freed tcache struct with an allocation of the right size, we overwrite:
 
@@ -1003,7 +1003,7 @@ tcache->entries[bin] = <address we want malloc to give us>
 now we can make ```malloc(size_class(bin))``` return a pointer anywhere we choose, as long as we satisfy safe-linking expectations for the next pointer when that chunk is popped.
 
 
-## turn controlled tcache into malloc returning .bss and then malloc returning .got.plt
+### turn controlled tcache into malloc returning .bss and then malloc returning .got.plt
 
 because of safe-linking, we typically make malloc return a writable staging area ```.bss``` where we can build a fake tcache entry, use that staged fake entry so the next allocation returns the real target ```.got.plt```, which we implement as follows:
 
@@ -1060,7 +1060,7 @@ after we corrupt tcache, the flow looks as follows:
 
 this is the controlled allocation to GOT stage.
 
-## GOT overwrite ==> ret n pivot
+### GOT overwrite ==> ret n pivot
 
 ### why does GOT work in this static binary
 
@@ -1082,13 +1082,13 @@ p += <more> pop rdi; pop rsi; pop rdx; pop rax; syscall <more>
 
 this tail is the "ROP runway" the pivot lands on. 
 
-## idea, summarized
+### idea, summarized
 
 
 use tcache poisoning to write into ```.got.plt``` ==> overwrite an ```IFUNC``` slot that will be called during parsing/dumping (```memchr / strcmp```) ==> point it at a pivot gadget (ret n) ==> pivot causes RSP to land into our controlled buffer region ==> ROP begins
 
 
-## execve ROP / solve
+### execve ROP / solve
 
 we just do :
 
@@ -1096,7 +1096,7 @@ we just do :
 rop.call('execve', [b'/bin/sh', [[b'/bin/sh'], [b'-p'], [b'-c'], [b'cat flag-*'], 0], 0])
 ```
 
-## summary
+### summary
 
 1. ```<?xml ...?>``` stores ```xml_decl_loc = &originals.back()```
 
@@ -1675,6 +1675,7 @@ if expression is a3[15] - N → idx = 64 - N
 if expression is a3[15] + N → idx = 64 + N
 ```
 reconstructing all gives us the flag, ```TSGCTF{Inv3571ga710n_1n70_BOF_Or13n73d_Pr0gramm1ng_a5_a_73chn1qu3_f0r_0bfu5ca710n}```
+
 
 
 
