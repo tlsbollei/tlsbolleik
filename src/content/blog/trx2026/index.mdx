@@ -233,7 +233,7 @@ thinstring
 
 but for this you have to do a lot of ThinString pointer swaps and it didnt work for me, and claude was lost aswell.
 
-## pwn - ret2win
+## pwn - ret2win (25 solves)
  
 despite the name this is not classic rop emporium ret2win. there is no `win()` function to jump to, there is nothing to `ret2` (haha get it? ret to). `chall.exe` is a windows PE x86-64 that runs under `wine` inside `nsjail` inside docker, and the "win" you have to reach is reading a file the jail bind mounts as read only. the trick of the chall is that it is a windows binary, but the exploitation environment is linux+wine so any assumptions i had about the challenge were quite frankly wrong
  
@@ -427,7 +427,7 @@ TRX{w1n3_15_d1ff3r3n7_fr0m_w1nd0w5_15n7_17}
 
 yeah.. it really is
 
-## pwn - krwd
+## pwn - krwd (4 solves)
  
 <Callout>
 did not manage to land this one during the ctf, i upsolved it after the ctf ended with a hint from another participant regarding what to focus on. i put a lot of hours into it, went down a very deep hole in completely the wrong direction, and never got a shell, sad. what follows is the intended solve (credit to the author, prosti, whose writeup lives on kqx.io) plus an honest account of the rabbit hole i dug for myself, because the gap between the two is the whole lesson of this chall
