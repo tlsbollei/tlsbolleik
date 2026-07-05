@@ -1,0 +1,234 @@
+---
+title: "TRX CTF 2026 writeups"
+description: "hoe lotta pwn"
+date: 2026-03-21
+tags: ['writeup', '2026', 'rev', 'pwn']
+authors: ['tlsbollei']
+image: './trx.png'
+---
+
+import Callout from '@/components/Callout.astro'
+import { Icon } from 'astro-icon/components'
+
+## pwn - triforce (14 solves)
+
+in this v8 chall, `d8` gets a new global function, called `triforce`. it requires one string argument, compares the same `Local<String>` handle
+against three strings
+
+```patch
++void Shell::Triforce(const v8::FunctionCallbackInfo<v8::Value>& info) {
++  DCHECK(i::ValidateCallbackInfo(info));
++  Isolate* isolate = info.GetIsolate();
++
++  if (info.Length() != 1) {
++    ThrowError(isolate, "The Triforce is missing!");
++    return;
++  }
++
++  if (!info[0]->IsString()) {
++    ThrowError(isolate, "The real Triforce is a String!");
++    return;
++  }
++
++  Local<String> triforce = info[0].As<String>();
++
++  Local<String> power =
++      String::NewFromUtf8Literal(isolate, "Power", NewStringType::kInternalized);
++
++  Local<String> wisdom =
++      String::NewFromUtf8Literal(isolate, "Wisdom", NewStringType::kInternalized);
++
++  Local<String> courage =
++      String::NewFromUtf8Literal(isolate, "Courage", NewStringType::kInternalized);
++
++  if (!triforce->StringEquals(power)) {
++    ThrowError(isolate, "You are lacking Power...");
++    return;
++  }
++
++  base::OS::Sleep(base::TimeDelta::FromSeconds(1));
++
++  if (!triforce->StringEquals(wisdom)) {
++    ThrowError(isolate, "You are lacking Wisdom...");
++    return;
++  }
++
++  base::OS::Sleep(base::TimeDelta::FromSeconds(1));
++
++  if (!triforce->StringEquals(courage)) {
++    ThrowError(isolate, "You are lacking Courage...");
++    return;
++  }
++
++  hatenoCheese = false;
++  MaybeLocal<String> ret = Shell::ReadFile(isolate, std::getenv("FLAG"), false);
++  hatenoCheese = true;
++
++  if (ret.IsEmpty()) {
++    std::cerr << "Failed to read flag, please open a ticket.\n";
++    ThrowError(isolate, "Failed to read flag, please open a ticket.");
++    return;
++  }
++
++  info.GetReturnValue().Set(ret.ToLocalChecked());
++}
++
+```
+
+only after all three `StringEquals` checks pass, (comparision of `Local<String>` handles against three strings `"Power"`, `"Wisdom"` and `"Courage"`), `Shell::ReadFile($FLAG)` is called. your classic d8 file apis are removed but `Worker`, `print`, `printErr` and `triforce` are still exposed. for an ordinary immutable js string this is impossible because, well, a single value cannot simulatenously equal three different strings.
+the core idea i initially got here was to race this,  to use the blocking sleep between the checks, maybe another thread can mutate the string object during those sleep windows, and the same JS value can match the three desired.
+
+
+### maglev patch
+
+at the end of the patch we can see an interesting patch in `/src/maglev/maglev-reducer.h`
+
+```patch
+diff --git a/src/maglev/maglev-reducer.h b/src/maglev/maglev-reducer.h
+index a607dc81a8d..c071240d17c 100644
+--- a/src/maglev/maglev-reducer.h
++++ b/src/maglev/maglev-reducer.h
+@@ -284,11 +284,14 @@ class MaglevReducer {
+   }
+ 
+   static enum CheckType GetCheckType(NodeType type, ValueNode* target) {
+-    if (NodeTypeIs(type, NodeType::kAnyHeapObject)) {
+-      if (target && target->Is<Phi>()) {
+-        target->Cast<Phi>()->SetUseRequiresHeapObject();
+-      }
++    if (1) {
+       return CheckType::kOmitHeapObjectCheck;
++      /*Do Clankers dream of Tokenized Sheep?
++      https://issues.chromium.org/issues/457296138
++      https://issues.chromium.org/issues/447039449
++      https://issues.chromium.org/issues/392938070
++      https://issues.chromium.org/issues/40671685
++      */
+     } else {
+       return CheckType::kCheckHeapObject;
+     }
+```
+
+we can see that the entire function `GetCheckType(NodeType type, ValueNode* target)` is omitted out. the initial logic of the function is that if Maglev knows that a value is a heap object using `if (NodeTypeIs(type, NodeType::kAnyHeapObject))`, it marks `Phi` nodes accordingly and skips inserting a runtime heap object check. otherwise, it just emitted a heap object check. `CheckType::kCheckHeapObject` is a directive which ensures that a javascript value is an actual allocated object and not a raw integer. we can see that this entire check is omitted out and instead maglev always makes an unsafe assumption that all nodes passed into the function are interpreted as heap objects without any further checks.
+
+### maglev bug used for cage r/w
+
+the above misinterpration matters a ton because a loop phi that is numerically used can be represented as `Float64` and later retagged with `kCanonicalizeSmi`, so we can use
+
+```js
+function tr(val, t) {
+  let phi = val;
+  for (let i = 0; i < 100000; i++) phi = phi + 0.0;
+  t.p = phi;
+}
+```
+
+after maglev tiers up, calling `tr(make_heapnum(K), target)` writes a raw Smi `K` into `target.p` despite the fact that later optimized code still treats `target.p` as a heap object. hence if `target.p = Smi(K)`, the raw tagged value becomes `2*K` and maglev map load at `heap_object - 1` reads `cage[2*K-1]`. the Smi check is gone but the map equality check still runs. choose `K` so that `2*K-1` lands inside controlled one byte string char data, we can make maglev believe that a Smi is a valid JSArray.
+
+### primitives
+
+#### p1
+
+we warm `trigger()` to maglev, then call it with a heap number containing `K`. `target.p` becomes the Smi value `K`
+
+#### p2
+
+we warm several copies of 
+
+```js
+function rd(o, i) {
+  return o.p.charCodeAt(i);
+}
+```
+and then we put `targeet.p=Smi(5)` with p1. the optimized string path treats it as a string object and reads from compressed cage offset `0x15+i`, which gives us a byte read for cage offset at and above `0x15`. during testing i have had problems with burning the buggy maglev version, so i had to rotate through 16 reader functions, since later tiering was destroying me.
+
+#### p3
+
+we can create an object with three recogfnizable Smi marker fields
+
+
+```js
+{ _M1: 0xc0ffee, _M2: 0x1ee777, _M3: 0xbe9bed }
+```
+
+and we scan the cage for those three Smivalues. from the object address, we can locate the nearby array that contains two references to that object. and wonce we figure out the arrays element `FixedArray`, which leaks compressed tagged object pointers
+
+```js
+function addrof(o) {
+  lkar[0] = o;
+  return r32(r32(lkar_addr + 8) - 1 + 8);
+}
+```
+
+#### p4 arbitrary 8 byte cage write
+
+to solve for flag 1 we need odd values such as string lengths `5` and `7` so a Smi only 4 byte write is not enough, which made me cry. the working primitive i found is a Float64 FixedDoubleArray write. we can create two fake objects using one byte string char data,
+
+1. `s_helper` which contains a fake FixedDoubleArray header and is retried until the fake fda is 8 byte aligned
+2. `s_payload_d` which contains bytes that force the off by one map check see a real `PACKED_DOUBLE_ELEMENTS` JSArray map and its elements pointer points at the fake fda inside `s_helper`
+
+consequently, `writer_d(o, i, v) { o.p[i] = v; }` is warmed on a real double array. after p1 sets `target_d.p = Smi(K_d)`, maglev believes `target_d.p` is the fake double array and a store to `o.p[i]` writes eight controlled bytes at
+
+```text
+fakefdabase + 8 + 8*i
+```
+
+so we wrap this like
+
+```js
+function aw64(addr, lo32, hi32) {
+  const off = (addr - FDA_BASE) >>> 0;
+  if ((off & 7) !== 0) throw new Error("shit");
+  writer_d(target_d, off / 8, makeDouble(lo32, hi32));
+}
+```
+
+### why we need a worker
+
+the function `triforce(s)` sleeps inside native code. the threat that calls it cannot run js while it is blocked in `base::OS::Sleep` therefore we can use a `Worker` for the blocking call, while the main thread performs the timed memory writes. a very useful property here is that this d8 build shares the pointer compressioncage between the main isolate and Worker isolates. a cage offset found by main can point into an object allocated by the Worker, and mains cage write is immediately visible to him.
+
+### exploit chain
+
+1. main builds p1, p2, p3 and p4
+2. worker creates a fresh `SeqOneByteString` which contains a 32 byte magic marker
+3. worker signals main and waits
+4. main scans the shared cage for magic bytes, the strings char data begins at `s_addr+0xc` so the string object is at `chars_off-0xc`
+5. main verifies th object is a `SeqOneByteString` and that its length is the expected marker length
+6. main writes `"Power"` into the worker string before the call starts
+
+ ```text
+   s + 0x08: length = 5
+   s + 0x0c: "Powe"
+   s + 0x10: "r\0\0\0<iomittedthis>"
+```
+
+7. main signals the worker and worker calls `triforce(s)`
+8. at about `+500ms` while `triforce` is sleeping after the `"Power"` check, main writes `length = 6; chars = "Wisdom"`
+9. at some time after while `triforce` is sleeping after the `"Wisdom"` check, main writes `length = 7; chars = "Courage"`
+10. the third comparision passes and we get the flag
+
+for the timed writes i used `Atomics.wait` for delay because it does not allocate and does not disturb the fake object layout
+
+### rabbit holing with ThinString
+
+i initially fell down a rabbit hole and tried to morph the Worker string into a `ThinString`
+
+```text
+map     = 0x425
+len  = 5 / 6 / 7
+ac  = tagged pointer to "Power" "Wisdom" "Courage"
+```
+
+this works conceptually becauase V8 `String::SlowEquals` derefereneces ThinStrings before comparing, so the layout becomes
+
+```text
+string
+  +0x00 map
+  +0x04 raw_hash_field
+  +0x08 length_ (uint32_t)
+
+thinstring
+  +0x0c actual_ (tagged InternalizedString)
+```
+
+but for this you have to do a lot of ThinString pointer swaps and it didnt work for me, and claude was lost aswell.
