@@ -426,3 +426,135 @@ TRX{w1n3_15_d1ff3r3n7_fr0m_w1nd0w5_15n7_17}
 ```
 
 yeah.. it really is
+
+## pwn - krwd
+ 
+<Callout>
+did not manage to land this one during the ctf, i upsolved it after the ctf ended with a hint from another participant regarding what to focus on. i put a lot of hours into it, went down a very deep hole in completely the wrong direction, and never got a shell, sad. what follows is the intended solve (credit to the author, prosti, whose writeup lives on kqx.io) plus an honest account of the rabbit hole i dug for myself, because the gap between the two is the whole lesson of this chall
+</Callout>
+krwd is a linux kernel module challenge. the module gives you kernel buffers (`kbufs`) that you read and write through "requests" (`krequests`), and the twist is that the requests are not executed synchronously in your ioctl. they are pushedx onto a workqueue and run later, asynchronously, from a kernel worker thread
+ 
+```c
+#define CHALL_KBUF_SIZE            0x0400
+#define CHALL_KBUFS_MAX_SIZE       0x0050
+#define CHALL_KREQUESTS_MAX_SIZE   0x0020
+ 
+enum krequest_type { TYPE_READ, TYPE_WRITE, TYPE_DELETE, TYPE_SET_WORK };
+```
+ 
+you `ADD_REQUEST` to register a read/write/delete against some `kbuf_idx`, then `SET_WORK` schedules that request with a delay
+ 
+```c
+case IOCTL_CHALL_SET_WORK:
+    INIT_DELAYED_WORK(&krequests[idx].dwork, request_handler);
+    schedule_delayed_work(&krequests[idx].dwork, msecs_to_jiffies(time));
+```
+ 
+and `request_handler`, running on the workqueue, is the thing that actually does the copy
+ 
+```c
+case TYPE_READ:
+    copy_to_user(kreq->info.rw.ubuf, kbuf->buf, size);
+    break;
+case TYPE_WRITE:
+    copy_from_user(kbuf->buf, kreq->info.rw.ubuf, size);
+    break;
+```
+ 
+environment is `qemu64 +smap +smep +fsgsbase`, `-smp 1`, kernel `6.17.0`, `pti=on`, `panic=-1`. single cpu matters a lot, hold that thought
+ 
+### the bug (intended)
+ 
+there are no BOFs, everything is under one `chall_ctx_mutex`, so there is apparently no race. `check_perms` looks airtight, which is the reason i decided to discard this idea initially and seek something else. from the kqx blog:
+
+```
+> what happens if you use `copy_{from,to}_user` in a kernel thread?
+ ```
+
+and the answer is the entire challenge. a kernel thread has no address space of its own, `task->mm == NULL`. what it actually runs with is `active_mm`, a borrowed user address space, whichever user process was last on this cpu. the scheduler leaves that mm installed (with its CR3) until it has a reason to switch it out
+ 
+<Callout>
+so when the workqueue worker executes `copy_to_user(ubuf, kbuf, size)`, `ubuf` is resolved against whatever process happens to be the current `active_mm` on that cpu which is not necessarily the process that submitted the request since it can be a completely different, more privileged process memory
+</Callout>
+hence the primitive isnt a corruption one, but one of semantic origin. `copy_to_user` from a kthread is a cross process arbitrary write into whoevers mm is currently borrowed, and you get to pick the delay so you control (statistically) when it fires. this behaviour is basically undocumented for workqueues, you only really find it by reading the scheduler's `context_switch`/`enter_lazy_tlb` path, so cruel yet so beautiful
+ 
+### turning that into root
+ 
+the plan writes itself once you accept the primitive
+ 
+1. get a privileged process running on the cpu
+2. time a `TYPE_READ` so the worker's `copy_to_user` lands while that process is the `active_mm`
+3. `copy_to_user(target_in_victim, kbuf_full_of_payload, PAGE_SIZE)` overwrites victim memory with data we staged into a kbuf
+the victim of choice is `/sbin/modprobe` and the kernel spawns it as root whenever a missing module is requested, and you can trigger that trivially from userland:
+ 
+```c
+for(;;) socket(22, SOCK_DGRAM, 0);   
+/sbin/modprobe
+```
+ 
+on this box `/sbin/modprobe` is a symlink to busybox, which is static and no PIE (the author even shipped it with symbols). no PIE means `_IO_2_1_stdout_` sits at a fixed address, no leak needed
+ 
+```c
+#define STDOUT_ADDRESS 0x657440
+```
+ 
+so we overwrite modprobe's `_IO_2_1_stdout_` FILE struct with a crafted one and let a simple angry FSOP run `system("/tmp/e")` when modprobe flushes stdout on exit. because busybox is static, `__dlopen` is defined, which means the static branch of `_IO_vtable_check` bails out early
+ 
+```c
+#else /* !SHARED */
+  if (__dlopen != NULL)
+    return;   
+#endif
+```
+ 
+so the vtable pointer check is effectively free, we don not even have to fight it. you can't `system("/bin/sh")` here because modprobe has no interactive stdio, so instead you point it at a dropped script
+ 
+```sh
+#!/bin/sh
+cat /dev/sda > /tmp/flag.txt
+```
+ 
+`/dev/sda` is the raw flag disk (`-drive file=flag.txt,if=ide`), and modprobe runs as root, so this just copies the flag out where our unprivileged process can read it
+  
+```c
+fsop_payload[5] += 1; // look at _IO_flush_all to understand why we need this lmao
+```
+ 
+classic FSOP off by one on the buffer pointer field so the flush path takes the branch that reaches the call
+ 
+### exploit chain
+ 
+1. drop `/tmp/e` with the root commands you want
+2. spray `TYPE_WRITE` requests to stuff the FSOP payload into the kbufs (this copy reads from your mm, which is fine, ur the one running)
+3. queue a pile of `TYPE_READ` requests, all pointing `ubuf` at `_IO_2_1_stdout_` (`0x657440`) inside the victim
+4. `SET_WORK` them with staggered delays (`1000 + i*10` ns) so they don't all fire at once and you get many shots at the timing window
+5. spam `socket(22, )` in a child to keep modprobe on the cpu
+6. on a lucky window the workers `copy_to_user` runs while modprobe is the `active_mm`, and the FSOP lands. modprobe exits, flushes stdout, and `system("/tmp/e")` runs as root
+7. read `/tmp/flag.txt`
+```text
+TRX{0h_s0_y0u_d0_und3rst4nd_h0w_kthr34ds_w0rk!_cd454889c85c415b}
+```
+ 
+### rabbit holing (my entire experience, basically)
+ 
+the description says "the solution to all your problems is right here -> https://kqx.io", and i read that as a pointer at qemu TCG emulation bugs rather than as the authors blog so i convinced myself the intended path was a memory corruption primitive and went hunting for one
+ 
+things i confirmed on a local qemu 8.2.2 (with the TCG bug present) and then could not carry to prod
+ 
+- `iretq` arbitrary-read leak via `gregs[REG_ERR]` byte-1 works, but only for CEA mapped pages. i leaked `IDT[1]`'s handler bytes and recovered kbase (`0xffffffffa3c01310 to 0xffffffffa3c00000`). felt pretty great but led to nowhere
+- a hardware bp (`PTRACE`) path that leaked a DB stack entry and gave me a physmap base in the `0xffff909100000000` form
+- `lcall *m16:64` to push into physmap is dead under `pti=on`. physmap is not in the user CR3, so the implicit push faults before any TCG trick can land bytes, kernel just logs `BUG: unable to handle page fault for address: <physmap+off>` and my exp dies which is the same reason the `iretq` physmap leak dies
+then i pivoted to the module's own `schedule_delayed_work` and found a genuine double add timer wheel race where `INIT_DELAYED_WORK` clears `timer.entry = {NULL,NULL}` without unlinking, then `schedule_delayed_work` re enqueues, so the later `detach_timer` does
+ 
+```text
+__hlist_del:
+  *pprev = next               
+  next->pprev = pprev         
+```
+ 
+confirmed the exact oops `general protection fault to non-canonical address 0xdead00000000012a to RIP: __run_timers+0x1bd`. but every write this race produces targets per cpu memory or the module .bss, never slab, and the values are fixed (`LIST_POISON2`, a `.bss` address). i sprayed 256x `msg_msg(1024)` looking for a kernel pointer to leak off the back of it and got 0 hits with the safe trigger, the aggressive trigger reboots before i can read anything because `panic=-1`. i also tried the fresh `kreq[31]` trick where a request slot that was never `ADD_REQUEST`'d still has `uid=0, gid=0, info=0` from the static init, and `check_perms` has a root bypass. so `SET_WORK` on it runs the handler as root. this is cute, but a zero length `copy_to_user(NULL,)` does nothing and i could not build it into anything, because i was still thinking about buffer ownership rather than whose mm the copy runs against
+ 
+ 
+### notes
+ 
+didnt solve it, still one of my favourite chall writeups to read afterwards because the intended bug is so clean. full credit to prosti / the TRX team (@Erge, @leave, @prosti) for the challenge and the reference solution on kqx.io. turns out the meta is reading source and not qemu changelog
