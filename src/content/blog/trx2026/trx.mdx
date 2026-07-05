@@ -15,7 +15,7 @@ import { Icon } from 'astro-icon/components'
 in this v8 chall, `d8` gets a new global function, called `triforce`. it requires one string argument, compares the same `Local<String>` handle
 against three strings
 
-```patch
+```diff
 +void Shell::Triforce(const v8::FunctionCallbackInfo<v8::Value>& info) {
 +  DCHECK(i::ValidateCallbackInfo(info));
 +  Isolate* isolate = info.GetIsolate();
@@ -83,7 +83,7 @@ the core idea i initially got here was to race this,  to use the blocking sleep 
 
 at the end of the patch we can see an interesting patch in `/src/maglev/maglev-reducer.h`
 
-```patch
+```diff
 diff --git a/src/maglev/maglev-reducer.h b/src/maglev/maglev-reducer.h
 index a607dc81a8d..c071240d17c 100644
 --- a/src/maglev/maglev-reducer.h
