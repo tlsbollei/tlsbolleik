@@ -47,7 +47,7 @@ subprocess.run(['stdbuf', '-oL', '-i0', './stork', tmp_path])
 that stdbuf wrapper shifts the heap layout compared to a bare ./stork, so every offset i calibrated under a naked binary was wrong on the remote, which made me extremely depresdsed. anything you tune locally has to be tuned under the same execution shape or the numbers do not transfer, for reference, under gdb the arena and the libc and the binary all land in a stable place
 around 0x7ffff0000000, which is lovely for reversing and completely unlike the randomized remote. the tracing i used was mostly two breakpoint scripts, one on the broker alloc path and one on the collector, printing the return pointer and size on every alloc and the freed pointer on every dealloc
 
-```gdb
+```bash
 set pagination off
 break *(_ZN15BrokerAllocator5allocEm+0xc7)
 commands
@@ -358,7 +358,7 @@ LuaValueCFunction::call(ret, self, args, argv)
 
 lel, the two fields the dispatch reads are +0x20 (must be nonzero) and +0x28 (the thing it calls), and it passes self + 0x10 as the functor so i point +0x28 at a tiny gadget in the binary
 
-```gdb
+```asm
 PIE + 0x1287E:
     mov rdi, rsi
     call qword [rax+0x18]
