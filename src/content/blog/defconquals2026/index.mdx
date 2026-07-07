@@ -33,7 +33,7 @@ thread. so at any moment there are three threads that can touch the heap, and th
 
 ### environment
 
-```text
+```bash
 Linux stork-64d948664-vw74j 7.0.9 #1 SMP PREEMPT Fri May 22 03:24:17 UTC 2026 x86_64 GNU/Linux
 ```
 
@@ -95,7 +95,7 @@ LuaValueCFunction
 
 the table lookup is the primitive i eventually abuse, so it is worth reading the real thing, here is `LuaValueTable::get_value`, lightly cleaned from hex-rays 
 
-```text
+```cpp
 get_value(out, table, key)
 {
   storage = *(table + 0x18)
@@ -137,7 +137,7 @@ so if i control the storage (its bucket_count, its keys, its values) and i contr
 
 `fn_ipairs` hands lua an iterator. the iterator is a CFunction whose `std::function` target captures the table being iterated as a `shared_ptr` and the capture is a plain heap object
 
-```text
+```cpp
 fn_ipairs(state, args)
 {
   tbl = dynamic_cast_to_LuaValueTable(args[0])
@@ -154,7 +154,7 @@ fn_ipairs(state, args)
 the ownership of the table now lives inside that 16 byte block on the system heap reachable only through the `std::function` target and the collector is conservative. it scans regions word by word and treats any word that falls inside the broker arena as a live reference. here
 is `GCAllocator::scan_range`
 
-```text
+```cpp
 scan_range(addr, len, arena_lo, arena_hi, seen, worklist)
 {
   off = 0
@@ -173,7 +173,7 @@ scan_range(addr, len, arena_lo, arena_hi, seen, worklist)
 ```
 `GCAllocator::collect` that calls the above
 
-```text
+```cpp
 collect(this)
 {
   if ( !broker->get_arena_bounds(&lo, &hi) )
@@ -197,7 +197,7 @@ the table pointer is still lying around in a native frame or an operand slot, th
 therefore the plan is to iterate a table with ipairs, keep the iterator, drop every direct reference to the table, scrub the stragglers, then force gc. the broker thread reclaims the table object and its storage. the iterator is still perfectly callable, and when lua calls it, the closure
 dereferences its stale captured pointer and calls `get_value` on freed memory
 
-```text
+```cpp
 ipairs_iterator::invoke(out, state, cap)
 {
   tbl = *(cap + 0x00)                    
@@ -272,7 +272,7 @@ LIBC2604_SYSTEM           = 0x5C560
 
 ### the chain
 
-#### 1. fin arena base
+#### 1. find arena base
 
 the fake storage address i pack into the reshape is arena relative, so before i can build any fake storage i have to know where the 64 MiB broker arena lives and the arena is 64 MiB aligned
 
