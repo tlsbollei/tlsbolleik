@@ -6,8 +6,8 @@ tags:
   - pwn
   - rev
   - heap
-  - garbage collector
-  - use-after-free
+  - lua
+  - compiler
 authors:
   - tlsbollei
 image: './defcon.jpg'
@@ -959,7 +959,7 @@ with tempfile.TemporaryDirectory() as tmp:
 
 it reads one line, max 200 bytes, writes it to ```prog.src```, runs the compiler to ```prog.asm```, assembles with nasm to prog.o, links with ld against gc.o, and then runs the binary with a five second timeout
 
-## compiler design
+### compiler design
 
 ```shell
 λ ls
@@ -1018,9 +1018,9 @@ so its a classic multi pass design within the ```compiler/``` directory, driven 
       (display-to-file prog out-file #:exists 'replace)))
 ```
 
-## pipeline explained
+### pipeline explained
 
-### common.rkt and shared definitions
+#### common.rkt and shared definitions
 
 ```common.rkt``` holds shared definitions, including the register assignment that the rest of the backend relies on, where ```rbp``` is the frame base, ```rsp``` is the frame top, ```r8``` is the root stack top, ```r9``` is the root stack bottom, ```rax``` is the return value and jump target. also, it names the runtime symbols ```lmapllvm_alloc``` and ```lmapllvm_panic```
 
@@ -1091,7 +1091,7 @@ so its a classic multi pass design within the ```compiler/``` directory, driven 
 ```
 
 
-### validation.rkt
+#### validation.rkt
 
 ```validation.rkt``` checks the program against the grammar, with two important nuances, ```panic!``` is rejected from user source, and integer literals are constrained to int61 (between minus 2 to the 60 and 2 to the 60 minus 1)
 
@@ -1149,7 +1149,7 @@ this clause only accepts programs only if the operator is in ```source-lang-ops`
 
 the pattern variable n matches any value, but ```(integer? n)``` restricts it to integers, so the rest of the clause is ```(int61? n)```
 
-### uniquify.rkt alpha renaming
+#### uniquify.rkt alpha renaming
 
 ```uniquify.rkt``` alpha renames every binding to a fresh name so later passes do not have the need to reason about shadowing
 
@@ -1205,7 +1205,7 @@ here the compiler must determine which ```x``` each occurence refers to, but aft
 
 each variable name identifies exactly one binding, which makes transformations such as substitution, inlining, closure conversion, register allocation and optimization much simpler.
 
-### lamba lowering in closure_conversion.rkt
+#### lamba lowering in closure_conversion.rkt
 
 in ```closure_conversion.rkt```, lambas are lowered to heap closures, meaning that in this function every lambda is turned into a make closure with a code label, an arity, a captured enviroment and it rewrites free variables into closure-env-get reads. it also lowers every call into an explicit dispatch that checks the callee is a function, checks the arity, then jumps through the closure code label:
 
@@ -1220,7 +1220,7 @@ in ```closure_conversion.rkt```, lambas are lowered to heap closures, meaning th
          (panic! ,ERROR-TYPE-MISMATCH))))
 ```
 
-### operator expansion and root insertion in datatype_encoding.rkt
+#### operator expansion and root insertion in datatype_encoding.rkt
 
 ```datatype_encoding.rkt``` is the pass that decides how values are represented at runtime. its first job is to expand every high level operator into low level code that respects the tag scheme, so an operator like ```+``` becomes shift, add, shift and an accessor like ```vec-get``` becomes a sequence of tag checks and a ```mem-read```. the second job of this is kinda easy to miss from static analysis first but matters a lot, it is a pas which inserts the gc roots. the runtime uses a shadow stack of roots, and a value is only findable by the collector if a ```push-root``` was emitted for it, hence two spots emit ```push-root``` and every param is pushed at entry
 
@@ -1245,7 +1245,7 @@ and every let binding is pushed right after it is computed
 
 the reason why this works for ordinary program is that everything a function holds in a named binding, a parameter or a let variable, ends up on the root stack, so any collection can walk the stack and find it. a value that is only somewhen computed as an inline arg to a call is never bound by a let and is not a parameter, so no root is emitted for it
 
-### flattening to statements in imperative_transform.rkt
+#### flattening to statements in imperative_transform.rkt
 
 ```imperative_transform.rkt``` turns every nested expression tree to a flat sequence of simple statements, therefore after this pass, every operation reads only names or literals and writes to a single destination, there are no nested subexpressions left. the core of this process is ```process-value-notail``` which computes a value into a named destination, hoisting every operand into its own fresh temp first 
 
@@ -1298,7 +1298,7 @@ statements are handled by ```process-st``` which does the exact same hoisting fo
 
 the reason why this pass even exists is that the backend cannot emit ```(mem-write ptr 0 (+ x y))``` directly, since an x86 instruction takes at most simple operands, not a whole subexpression as an argument, so a nested form like ```(mem-write ptr 0 (+ x y))``` becomes a straight line, where you compute ```ptr``` into a temp, compute ```0``` into a temp, compute ```(+ x y)``` into a temp (which, funnily enough, first lands ```x``` and ```y``` in temps) and then a single ```mem-write``` of three names. now, each intermediate result has a name, which is what the frame allocater needs later to hand to a stack slot. two things to take with you from here, firstly, the last clause of ```process-st``` shows that a value used only for effect, such as an integer literal siting inside a ```begin```, is still run through ```process-value-nontail``` with a fresh dest, hence each literal becomes its own ```(mov tmp n)``` rather than being folded away. secondly, because every operand is thrown into a named temp, the number of stack slots is large and predictable!
 
-### stack frames and the calling convention in function_calls.rkt
+#### stack frames and the calling convention in function_calls.rkt
 
 ```function_calls.rkt``` assigns a concrete stakc slot to every name and emits the real calling convention which includes the shadow stack root bookkeeping, and this is where the abstract ```(mov v <>)``` and ```(call <>)``` forms become frame relative memory, and jumps. each function first lays out its frame, parameters get slots counting up from ```rbp```, the base pointer, and every other named temporary gets the next free slot as the frame is being walked
 
@@ -1368,7 +1368,7 @@ a name ```v``` lives at ```[rbp - 8*k]``` for some slot index ```k```, and the p
 
 at any collection the runtime can walk ```r8``` up to the region end and find exactly the live named values, this works for ordinary code because every value a frame cares about was either a parameter or a let binding, both pushed as roots by ```datatype_encoding.rkt```, however this also includes an invariant on the arg path, an inline call argument is computed into a frame temp and moved straight into the callee slots, and its never pushed as a root, so during the window where that argument is the return value in flight, ```emit-return``` and ```emit-tail-call``` have already run ```(mov r8 r9)``` and the value only exists in ```rax``` or an arg slot, invisible to gc.
 
-### linearizing control flow in control_flow.rkt
+#### linearizing control flow in control_flow.rkt
 
 this function flattens the last of the tree structure. after ```function_calls.rkt``` there are still nested ```if``` and ```begin``` forms, and this pass/function turns them into labeled blocks, comparisions, jumps and all that which x86 understands
 
@@ -1401,7 +1401,7 @@ this function flattens the last of the tree structure. after ```function_calls.r
 
 something like  ```(if (< a b) t1 t2)``` becomes ```(cmp a b)```, a conditional ```(jump-if < if-label)```, an unconditional ```(jmp else-label)```, then the two blocks introduced by ```(start if-label)``` and ```(start else-label)```. a statement position ```if``` also allocates a ```final-label``` so both arms rejoin and the ```return-label``` form from a non tail call is split into the jump that performs the call and the ```(start label)``` that marks where control comes back
 
-### x86-64 emission and the runtime wrapper in emit_instructions.rkt
+#### x86-64 emission and the runtime wrapper in emit_instructions.rkt
 
 in this pass the final nasm is printed, each flat instruction is lowered to concrete x86 and it wraps trhe entire program in a preamble and postamble that supply ```_start```, the allocator, the collector trampoline and the exit handlers. memory access is lowered in an interesting way, all objects are word arrays, so a ```mem-read``` or ```mem-write``` becomes a scaled index by 8 which is staged through scratch registers
 
@@ -1495,7 +1495,7 @@ oom:
 
 ```lmapllvm_alloc``` is the allocation wrapper, it callsd ```gc_alloc``` and if that returns null it run one collection through ```invoke_gc``` (which calls ```gc_collect``` with the root stack top in ```rdi```) and then tries again, giving up to ```oom``` only if the second attempt also fails. ```lmapllvm_panic``` and ```oom``` are both exit syscalls with an error code which is why a type or bounds violation terminates the process cleanly rather than doing anything unsafe
 
-## value and object encoding
+### value and object encoding
 
 datatype_encoding.rkt uses three tag bits where integers are stored shifted left by three (low three bits 000, tag 0), pointers carry tag 1 in the low bit and heap objects place a type tag in word 0 where a vector is 2, a pair is 3, a closure is 4
 
@@ -1524,11 +1524,11 @@ closure   word0 = 4   word1 = code_label word2 = arity   word3 = envsize   word4
 
 the thing here is that this veryd guard reads word0 and word1 of whatever the pointer points at and trusts those bytes as if it were a real vector, which we hinge on
 
-## the bug
+### the bug
 
 a value passed as an inline call arg is not a gc root. if a collection fires while that value is live, the collector cannot see it and sweeps it. the function that was going to return it returns a pointer into freed memory, and because ```mark_object``` ignores freed blocks, rooting that returned pointer afterward does nothing and the next allocation reuses the memory underneath it
 
-### building the dangling pointer
+#### building the dangling pointer
 
 we can wrap the trigger in two helpers
 
@@ -1550,7 +1550,7 @@ the sizing comes from the outer program, it first evaluates fill = make-vec 5236
 
 stale is rooted after it comes back, but its block is already free and ```mark_object``` skips it, the next allocation, ```r = make-vec 198```, forces a second collect that sweeps a, c and 318, coalesces the whole region behind fill into a single free block, then places r at the start of it. now, r physically overlaps the bytes stale points to!
 
-### forging a header and writing the code label
+#### forging a header and writing the code label
 
 stale still carries its old header claiming a vector length of 126 so it already passes ```vec-set!``` type and bounds checks, we can also write through r onto the exact words stale reads as its header
 
@@ -1565,7 +1565,7 @@ unit encodes as the value 2 which equals the vector tag, so r index 103 puts a v
 (vec-set! fake 97 525880)
 ```
 
-### the shellcode and the tagged code pointer
+#### the shellcode and the tagged code pointer
 
 the value written is 525880, and integer tagging multiplies by eight, so the stored code label becomes 525880 times 8 = 0x4031c0 which is an address inside of ```.text``` and it is also where the shellcode lives
 
@@ -1596,7 +1596,7 @@ and the last statement calls target whose code label is now ```0x4031c0```
 
 we can bp on the first shellcode instruction to confirm the dispatch reads the corrupted label and tail jumps (jmp rax with rax = 0x4031c0)
 
-### solve 
+#### solve 
 
 ```python
 from pwn import *
