@@ -6,15 +6,15 @@ tags:
   - pwn
   - rev
   - heap
-  - cpp
-  - compiler
+  - garbage collector
+  - use-after-free
 authors:
   - tlsbollei
 image: './defcon.jpg'
 ---
 
 import Callout from '@/components/Callout.astro'
-import { Icon } from 'astro-icon/components'
+import Icon from '@/components/Icon.astro'
 
 ## pwn - stork (10 solves)
 
@@ -1154,7 +1154,7 @@ the pattern variable n matches any value, but ```(integer? n)``` restricts it to
 
 ```uniquify.rkt``` alpha renames every binding to a fresh name so later passes do not have the need to reason about shadowing
 
-```racket title="uniquify.rkt"```
+```racket title="uniquify.rkt"
 (define (uniquify e vids)
   (match e
     [`(let ([,xs ,es] ...) ,ebody)
@@ -1547,7 +1547,7 @@ stage allocates a (which is let bound and rooted), then tail calls ret2. the fir
  
 the sizing comes from the outer program, it first evaluates fill = make-vec 523639, which is (523639 plus 2) times 8 bytes, about 4.19 MB, against a 4 MB heap which consumes nearly the whole heap and leaves a few kilobytes free, hence the small allocations inside stage exhaust the remainder and force a gc_collect exactly at make-vec 318. at that collect the roots are fill, a, and c, make-vec 126 is unrooted and gets swept. ret2 returns the freed 126 pointer and it is bound to stale
 
-![uaf](./mapleuaf.jpg)
+![uaf](mapleuaf.png)
 
 stale is rooted after it comes back, but its block is already free and ```mark_object``` skips it, the next allocation, ```r = make-vec 198```, forces a second collect that sweeps a, c and 318, coalesces the whole region behind fill into a single free block, then places r at the start of it. now, r physically overlaps the bytes stale points to!
 
