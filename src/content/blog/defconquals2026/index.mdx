@@ -14,6 +14,7 @@ image: './defcon.jpg'
 ---
 
 import Callout from '@/components/Callout.astro'
+import Icon from '@/components/Icon.astro'
 
 ## pwn - stork (10 solves)
 
@@ -1296,7 +1297,7 @@ statements are handled by ```process-st``` which does the exact same hoisting fo
     [value (process-value-nontail value (fresh-var-id))]))
 ```
 
-the reason why this pass even exists is that the backend cannot emit ```(mem-write ptr 0 (+ x y))``` directly, since an x86 instruction takes at most simple operands, not a whole subexpression as an argument, so a nested form like ```(mem-write ptr 0 (+ x y)) becomes a straight line, where you compute ```ptr``` into a temp, compute ```0``` into a temp, compute ```(+ x y)``` into a temp (which, funnily enough, first lands ```x``` and ```y``` in temps) and then a single ```mem-write``` of three names. now, each intermediate result has a name, which is what the frame allocater needs later to hand to a stack slot. two things to take with you from here, firstly, the last clause of ```process-st``` shows that a value used only for effect, such as an integer literal siting inside a ```begin```, is still run through ```process-value-nontail``` with a fresh dest, hence each literal becomes its own ```(mov tmp n)``` rather than being folded away. secondly, because every operand is thrown into a named temp, the number of stack slots is large and predictable!
+the reason why this pass even exists is that the backend cannot emit ```(mem-write ptr 0 (+ x y))``` directly, since an x86 instruction takes at most simple operands, not a whole subexpression as an argument, so a nested form like ```(mem-write ptr 0 (+ x y))``` becomes a straight line, where you compute ```ptr``` into a temp, compute ```0``` into a temp, compute ```(+ x y)``` into a temp (which, funnily enough, first lands ```x``` and ```y``` in temps) and then a single ```mem-write``` of three names. now, each intermediate result has a name, which is what the frame allocater needs later to hand to a stack slot. two things to take with you from here, firstly, the last clause of ```process-st``` shows that a value used only for effect, such as an integer literal siting inside a ```begin```, is still run through ```process-value-nontail``` with a fresh dest, hence each literal becomes its own ```(mov tmp n)``` rather than being folded away. secondly, because every operand is thrown into a named temp, the number of stack slots is large and predictable!
 
 ### stack frames and the calling convention in function_calls.rkt
 
@@ -1546,7 +1547,7 @@ stage allocates a (which is let bound and rooted), then tail calls ret2. the fir
  
 the sizing comes from the outer program, it first evaluates fill = make-vec 523639, which is (523639 plus 2) times 8 bytes, about 4.19 MB, against a 4 MB heap which consumes nearly the whole heap and leaves a few kilobytes free, hence the small allocations inside stage exhaust the remainder and force a gc_collect exactly at make-vec 318. at that collect the roots are fill, a, and c, make-vec 126 is unrooted and gets swept. ret2 returns the freed 126 pointer and it is bound to stale
 
-![uaf](mapleuaf.png)
+![uaf](./mapleuaf.png)
 
 stale is rooted after it comes back, but its block is already free and ```mark_object``` skips it, the next allocation, ```r = make-vec 198```, forces a second collect that sweeps a, c and 318, coalesces the whole region behind fill into a single free block, then places r at the start of it. now, r physically overlaps the bytes stale points to!
 
